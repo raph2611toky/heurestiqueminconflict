@@ -1,10 +1,19 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
-// ─── Constantes ──────────────────────────────────────────────────────────────
 const CHANNELS = [1, 6, 11];
-const CHANNEL_COLORS = { 1: "#00e5ff", 6: "#69ff47", 11: "#ff6b35" };
-const CHANNEL_LABELS = { 1: "CH 1", 6: "CH 6", 11: "CH 11" };
+
+const CHANNEL_COLORS = {
+  1: "#00e5ff",
+  6: "#69ff47",
+  11: "#ff6b35",
+};
+
+const CHANNEL_LABELS = {
+  1: "CH 1",
+  6: "CH 6",
+  11: "CH 11",
+};
 
 const INITIAL_APS = [
   { id: 1, name: "AP-01", x: 150, y: 140, channel: 1 },
@@ -23,7 +32,6 @@ const INITIAL_LINKS = [
   [2, 4],
 ];
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 function normalizeLink(a, b) {
   return a < b ? [a, b] : [b, a];
 }
@@ -34,177 +42,284 @@ function sameLink(link, a, b) {
 }
 
 function countConflicts(aps, links) {
-  let n = 0;
+  let count = 0;
+
   for (const [a, b] of links) {
     const apA = aps.find((ap) => ap.id === a);
     const apB = aps.find((ap) => ap.id === b);
-    if (apA && apB && apA.channel === apB.channel) n++;
+
+    if (apA && apB && apA.channel === apB.channel) {
+      count++;
+    }
   }
-  return n;
+
+  return count;
 }
 
 function getConflictedAPIds(aps, links) {
-  const set = new Set();
+  const conflicted = new Set();
+
   for (const [a, b] of links) {
     const apA = aps.find((ap) => ap.id === a);
     const apB = aps.find((ap) => ap.id === b);
+
     if (apA && apB && apA.channel === apB.channel) {
-      set.add(a);
-      set.add(b);
+      conflicted.add(a);
+      conflicted.add(b);
     }
   }
-  return Array.from(set);
+
+  return Array.from(conflicted);
 }
 
 function conflictScoreForChannel(apId, channel, aps, links) {
   let score = 0;
+
   for (const [a, b] of links) {
     if (a !== apId && b !== apId) continue;
+
     const neighborId = a === apId ? b : a;
     const neighbor = aps.find((ap) => ap.id === neighborId);
-    if (neighbor && neighbor.channel === channel) score++;
+
+    if (neighbor && neighbor.channel === channel) {
+      score++;
+    }
   }
+
   return score;
 }
 
-function runMinConflicts(aps, links, maxIterations = 1000) {
-  let current = aps.map((ap) => ({ ...ap }));
-  const before = countConflicts(current, links);
-  const history = [];
+function cloneAps(aps) {
+  return aps.map((ap) => ({ ...ap }));
+}
 
-  for (let iter = 1; iter <= maxIterations; iter++) {
-    const total = countConflicts(current, links);
-    if (total === 0) {
-      return { solution: current, before, after: 0, iterations: iter - 1, success: true, history };
+function buildMinConflictsSimulation(aps, links, maxIterations = 1000) {
+  let current = cloneAps(aps);
+  const initialAps = cloneAps(aps);
+  const before = countConflicts(current, links);
+  const steps = [];
+
+  for (let iteration = 1; iteration <= maxIterations; iteration++) {
+    const conflictsBefore = countConflicts(current, links);
+
+    if (conflictsBefore === 0) {
+      break;
     }
 
     const conflictedIds = getConflictedAPIds(current, links);
-    if (conflictedIds.length === 0) break;
 
-    const selectedId = conflictedIds[Math.floor(Math.random() * conflictedIds.length)];
-
-    let bestChannels = [];
-    let bestScore = Infinity;
-
-    for (const ch of CHANNELS) {
-      const score = conflictScoreForChannel(selectedId, ch, current, links);
-      if (score < bestScore) {
-        bestScore = score;
-        bestChannels = [ch];
-      } else if (score === bestScore) {
-        bestChannels.push(ch);
-      }
+    if (conflictedIds.length === 0) {
+      break;
     }
 
-    const chosen = bestChannels[Math.floor(Math.random() * bestChannels.length)];
-    current = current.map((ap) => (ap.id === selectedId ? { ...ap, channel: chosen } : ap));
+    const selectedId =
+      conflictedIds[Math.floor(Math.random() * conflictedIds.length)];
 
-    history.push({
-      iteration: iter,
+    const selectedBefore = current.find((ap) => ap.id === selectedId);
+
+    const candidates = CHANNELS.map((channel) => ({
+      channel,
+      score: conflictScoreForChannel(selectedId, channel, current, links),
+    }));
+
+    const minScore = Math.min(...candidates.map((candidate) => candidate.score));
+
+    const bestChannels = candidates
+      .filter((candidate) => candidate.score === minScore)
+      .map((candidate) => candidate.channel);
+
+    const chosenChannel =
+      bestChannels[Math.floor(Math.random() * bestChannels.length)];
+
+    const afterAps = current.map((ap) =>
+      ap.id === selectedId ? { ...ap, channel: chosenChannel } : ap
+    );
+
+    const conflictsAfter = countConflicts(afterAps, links);
+
+    steps.push({
+      iteration,
       apId: selectedId,
-      apName: current.find((ap) => ap.id === selectedId)?.name,
-      channel: chosen,
-      conflicts: countConflicts(current, links),
+      apName: selectedBefore?.name || `AP-${selectedId}`,
+      previousChannel: selectedBefore?.channel,
+      chosenChannel,
+      candidates,
+      conflictsBefore,
+      conflictsAfter,
+      afterAps: cloneAps(afterAps),
+      conflictedIdsBefore: getConflictedAPIds(current, links),
     });
+
+    current = afterAps;
   }
 
+  const after = countConflicts(current, links);
+
   return {
-    solution: current,
-    before,
-    after: countConflicts(current, links),
-    iterations: maxIterations,
-    success: countConflicts(current, links) === 0,
-    history,
+    initialAps,
+    steps,
+    summary: {
+      before,
+      after,
+      iterations: steps.length,
+      success: after === 0,
+      history: steps,
+      solution: cloneAps(current),
+    },
   };
 }
 
-// ─── Composant principal ──────────────────────────────────────────────────────
 export default function App() {
   const canvasRef = useRef(null);
 
   const [aps, setAps] = useState(INITIAL_APS);
   const [links, setLinks] = useState(INITIAL_LINKS);
+
   const [dragging, setDragging] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+
   const [linkMode, setLinkMode] = useState(false);
   const [selectedAP, setSelectedAP] = useState(null);
+
+  const [activeTab, setActiveTab] = useState("aps");
   const [result, setResult] = useState(null);
-  const [running, setRunning] = useState(false);
-  const [activeTab, setActiveTab] = useState("aps"); // aps | result | info
+
+  const [editingId, setEditingId] = useState(null);
+
+  const [constraintA, setConstraintA] = useState("");
+  const [constraintB, setConstraintB] = useState("");
+
+  const [simulation, setSimulation] = useState(null);
+  const [playIndex, setPlayIndex] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [activeStep, setActiveStep] = useState(null);
+  const [simulationSpeed, setSimulationSpeed] = useState(900);
 
   const conflicts = useMemo(() => countConflicts(aps, links), [aps, links]);
 
-  // ── Position souris ──
-  function getPos(event) {
-    const rect = canvasRef.current.getBoundingClientRect();
-    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  const conflictedIds = useMemo(
+    () => new Set(getConflictedAPIds(aps, links)),
+    [aps, links]
+  );
+
+  const visibleLogs = useMemo(() => {
+    if (!simulation) return [];
+    return simulation.steps.slice(0, playIndex);
+  }, [simulation, playIndex]);
+
+  function clearResultAndSimulation() {
+    setResult(null);
+    setSimulation(null);
+    setPlayIndex(0);
+    setIsPlaying(false);
+    setActiveStep(null);
   }
 
-  // ── Ajouter AP ──
+  function getCanvasPosition(event) {
+    const rect = canvasRef.current.getBoundingClientRect();
+
+    return {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+  }
+
   function handleAddAP() {
     const nextId = aps.length > 0 ? Math.max(...aps.map((ap) => ap.id)) + 1 : 1;
-    setAps((prev) => [
-      ...prev,
-      {
-        id: nextId,
-        name: `AP-${String(nextId).padStart(2, "0")}`,
-        x: 100 + Math.random() * 500,
-        y: 80 + Math.random() * 380,
-        channel: CHANNELS[Math.floor(Math.random() * CHANNELS.length)],
-      },
-    ]);
-    setResult(null);
+
+    const newAP = {
+      id: nextId,
+      name: `AP-${String(nextId).padStart(2, "0")}`,
+      x: 110 + Math.random() * 520,
+      y: 90 + Math.random() * 380,
+      channel: CHANNELS[Math.floor(Math.random() * CHANNELS.length)],
+    };
+
+    setAps((prev) => [...prev, newAP]);
+    clearResultAndSimulation();
   }
 
-  // ── Double-clic sur canvas ──
   function handleDoubleClick(event) {
-    if (event.target !== canvasRef.current && !event.target.classList.contains("canvas-inner")) return;
-    const pos = getPos(event);
+    if (
+      event.target !== canvasRef.current &&
+      !event.target.classList.contains("canvas-inner")
+    ) {
+      return;
+    }
+
+    const position = getCanvasPosition(event);
     const nextId = aps.length > 0 ? Math.max(...aps.map((ap) => ap.id)) + 1 : 1;
-    setAps((prev) => [
-      ...prev,
-      {
-        id: nextId,
-        name: `AP-${String(nextId).padStart(2, "0")}`,
-        x: pos.x,
-        y: pos.y,
-        channel: CHANNELS[Math.floor(Math.random() * CHANNELS.length)],
-      },
-    ]);
-    setResult(null);
+
+    const newAP = {
+      id: nextId,
+      name: `AP-${String(nextId).padStart(2, "0")}`,
+      x: position.x,
+      y: position.y,
+      channel: CHANNELS[Math.floor(Math.random() * CHANNELS.length)],
+    };
+
+    setAps((prev) => [...prev, newAP]);
+    clearResultAndSimulation();
   }
 
-  // ── Supprimer AP ──
   function handleDeleteAP(id) {
     setAps((prev) => prev.filter((ap) => ap.id !== id));
     setLinks((prev) => prev.filter(([a, b]) => a !== id && b !== id));
     setSelectedAP(null);
-    setResult(null);
+    setEditingId(null);
+    clearResultAndSimulation();
   }
 
-  // ── Drag ──
+  function handleNameChange(apId, value) {
+    setAps((prev) =>
+      prev.map((ap) => (ap.id === apId ? { ...ap, name: value } : ap))
+    );
+    clearResultAndSimulation();
+  }
+
+  function handleChannelChange(apId, channel) {
+    setAps((prev) =>
+      prev.map((ap) =>
+        ap.id === apId ? { ...ap, channel: Number(channel) } : ap
+      )
+    );
+    clearResultAndSimulation();
+  }
+
   function handleAPMouseDown(event, ap) {
     event.stopPropagation();
+
+    if (event.target.closest("button") || event.target.closest("input")) {
+      return;
+    }
+
     if (linkMode) {
       handleSelectForLink(ap.id);
       return;
     }
-    const pos = getPos(event);
+
+    const position = getCanvasPosition(event);
+
     setDragging(ap.id);
-    setDragOffset({ x: pos.x - ap.x, y: pos.y - ap.y });
+    setDragOffset({
+      x: position.x - ap.x,
+      y: position.y - ap.y,
+    });
   }
 
   const handleMouseMove = useCallback(
     (event) => {
       if (!dragging) return;
-      const pos = getPos(event);
+
+      const position = getCanvasPosition(event);
+
       setAps((prev) =>
         prev.map((ap) =>
           ap.id === dragging
             ? {
                 ...ap,
-                x: Math.max(46, Math.min(pos.x - dragOffset.x, 754)),
-                y: Math.max(46, Math.min(pos.y - dragOffset.y, 514)),
+                x: Math.max(48, Math.min(position.x - dragOffset.x, 760)),
+                y: Math.max(48, Math.min(position.y - dragOffset.y, 520)),
               }
             : ap
         )
@@ -214,190 +329,329 @@ export default function App() {
   );
 
   function handleMouseUp() {
+    if (dragging) {
+      clearResultAndSimulation();
+    }
+
     setDragging(null);
   }
 
-  // ── Liaison ──
   function handleSelectForLink(apId) {
-    if (!selectedAP) { setSelectedAP(apId); return; }
-    if (selectedAP === apId) { setSelectedAP(null); return; }
+    if (!selectedAP) {
+      setSelectedAP(apId);
+      return;
+    }
+
+    if (selectedAP === apId) {
+      setSelectedAP(null);
+      return;
+    }
+
     const [a, b] = normalizeLink(selectedAP, apId);
+
     setLinks((prev) => {
       const exists = prev.some((link) => sameLink(link, a, b));
-      return exists ? prev.filter((link) => !sameLink(link, a, b)) : [...prev, [a, b]];
+
+      if (exists) {
+        return prev.filter((link) => !sameLink(link, a, b));
+      }
+
+      return [...prev, [a, b]];
     });
+
     setSelectedAP(null);
-    setResult(null);
+    clearResultAndSimulation();
   }
 
-  // ── Canal manuel ──
-  function handleChannelChange(apId, channel) {
-    setAps((prev) => prev.map((ap) => (ap.id === apId ? { ...ap, channel: Number(channel) } : ap)));
-    setResult(null);
+  function handleAddConstraint() {
+    const a = Number(constraintA);
+    const b = Number(constraintB);
+
+    if (!a || !b || a === b) return;
+
+    const [x, y] = normalizeLink(a, b);
+
+    const exists = links.some((link) => sameLink(link, x, y));
+
+    if (!exists) {
+      setLinks((prev) => [...prev, [x, y]]);
+      clearResultAndSimulation();
+    }
+
+    setConstraintA("");
+    setConstraintB("");
   }
 
-  // ── Lancer Min-Conflicts ──
-  function handleRun() {
-    setRunning(true);
-    setResult(null);
-    setTimeout(() => {
-      const res = runMinConflicts(aps, links, 1000);
-      setAps(res.solution);
-      setResult(res);
-      setRunning(false);
-      setActiveTab("result");
-    }, 400);
+  function handleRemoveConstraint(a, b) {
+    setLinks((prev) => prev.filter((link) => !sameLink(link, a, b)));
+    clearResultAndSimulation();
   }
 
-  // ── Canaux aléatoires ──
   function handleRandomize() {
     setAps((prev) =>
-      prev.map((ap) => ({ ...ap, channel: CHANNELS[Math.floor(Math.random() * CHANNELS.length)] }))
+      prev.map((ap) => ({
+        ...ap,
+        channel: CHANNELS[Math.floor(Math.random() * CHANNELS.length)],
+      }))
     );
-    setResult(null);
+
+    clearResultAndSimulation();
   }
 
-  // ── Reset ──
   function handleReset() {
-    setAps(INITIAL_APS);
-    setLinks(INITIAL_LINKS);
+    setAps(cloneAps(INITIAL_APS));
+    setLinks(INITIAL_LINKS.map((link) => [...link]));
     setSelectedAP(null);
     setLinkMode(false);
+    setEditingId(null);
+    setConstraintA("");
+    setConstraintB("");
     setResult(null);
+    setSimulation(null);
+    setPlayIndex(0);
+    setIsPlaying(false);
+    setActiveStep(null);
+    setActiveTab("aps");
   }
+
+  function handleStartSimulation() {
+    const generated = buildMinConflictsSimulation(aps, links, 1000);
+
+    setSimulation(generated);
+    setResult(null);
+    setPlayIndex(0);
+    setActiveStep(null);
+    setAps(cloneAps(generated.initialAps));
+    setIsPlaying(generated.steps.length > 0);
+    setActiveTab("simulation");
+
+    if (generated.steps.length === 0) {
+      setResult(generated.summary);
+    }
+  }
+
+  function applySimulationIndex(index) {
+    if (!simulation) return;
+
+    if (index <= 0) {
+      setAps(cloneAps(simulation.initialAps));
+      setActiveStep(null);
+      setPlayIndex(0);
+      return;
+    }
+
+    const step = simulation.steps[index - 1];
+
+    if (!step) return;
+
+    setAps(cloneAps(step.afterAps));
+    setActiveStep(step);
+    setPlayIndex(index);
+
+    if (index >= simulation.steps.length) {
+      setIsPlaying(false);
+      setResult(simulation.summary);
+    }
+  }
+
+  function handlePlayPause() {
+    if (!simulation) return;
+
+    if (playIndex >= simulation.steps.length) {
+      applySimulationIndex(0);
+      setIsPlaying(true);
+      return;
+    }
+
+    setIsPlaying((prev) => !prev);
+  }
+
+  function handleNextStep() {
+    if (!simulation) return;
+
+    setIsPlaying(false);
+    applySimulationIndex(Math.min(playIndex + 1, simulation.steps.length));
+  }
+
+  function handleGoToEnd() {
+    if (!simulation) return;
+
+    setIsPlaying(false);
+    applySimulationIndex(simulation.steps.length);
+    setResult(simulation.summary);
+  }
+
+  function handleRestartSimulation() {
+    if (!simulation) return;
+
+    setIsPlaying(false);
+    applySimulationIndex(0);
+    setResult(null);
+    setTimeout(() => setIsPlaying(true), 100);
+  }
+
+  useEffect(() => {
+    if (!simulation || !isPlaying) return;
+
+    if (playIndex >= simulation.steps.length) {
+      setIsPlaying(false);
+      setResult(simulation.summary);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      applySimulationIndex(playIndex + 1);
+    }, simulationSpeed);
+
+    return () => clearTimeout(timer);
+  }, [simulation, isPlaying, playIndex, simulationSpeed]);
 
   function isConflict(a, b) {
     const apA = aps.find((ap) => ap.id === a);
     const apB = aps.find((ap) => ap.id === b);
+
     return apA && apB && apA.channel === apB.channel;
   }
 
-  const conflictedIds = useMemo(() => new Set(getConflictedAPIds(aps, links)), [aps, links]);
+  function getAPName(id) {
+    return aps.find((ap) => ap.id === id)?.name || `AP-${id}`;
+  }
+
+  const progress =
+    simulation && simulation.steps.length > 0
+      ? Math.round((playIndex / simulation.steps.length) * 100)
+      : 0;
 
   return (
     <div className="app">
-      {/* ── HEADER ── */}
       <header className="header">
         <div className="header-left">
-          <div className="header-badge">ADOMC · Min-Conflicts</div>
+          <div className="header-badge">Min-Conflicts · Réseaux Wi-Fi</div>
+
           <h1 className="header-title">
-            <span className="title-wifi">Wi-Fi</span> Channel Optimizer
+            <span>Wi-Fi</span> Channel Optimizer
           </h1>
-          <p className="header-sub">
-            Attribution automatique des canaux par heuristique Min-Conflicts
+
+          <p className="header-subtitle">
+            Éditeur dynamique pour simuler l’attribution automatique des canaux
+            Wi-Fi avec réduction des interférences.
           </p>
         </div>
 
         <div className="header-stats">
           <div className={`stat-box ${conflicts === 0 ? "stat-ok" : "stat-bad"}`}>
-            <span className="stat-label">CONFLITS</span>
-            <span className="stat-value">{conflicts}</span>
+            <small>Conflits</small>
+            <strong>{conflicts}</strong>
           </div>
+
           <div className="stat-box">
-            <span className="stat-label">ACCESS POINTS</span>
-            <span className="stat-value">{aps.length}</span>
+            <small>Access points</small>
+            <strong>{aps.length}</strong>
           </div>
+
           <div className="stat-box">
-            <span className="stat-label">LIAISONS</span>
-            <span className="stat-value">{links.length}</span>
+            <small>Contraintes</small>
+            <strong>{links.length}</strong>
           </div>
         </div>
       </header>
 
-      <div className="main-layout">
-        {/* ── ÉDITEUR ── */}
+      <main className="main-layout">
         <section className="editor-section">
           <div className="toolbar">
-            <button className="btn btn-default" onClick={handleAddAP}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg>
+            <button className="btn" onClick={handleAddAP}>
               Ajouter AP
             </button>
 
             <button
-              className={`btn ${linkMode ? "btn-active" : "btn-default"}`}
-              onClick={() => { setLinkMode((p) => !p); setSelectedAP(null); }}
+              className={`btn ${linkMode ? "btn-active" : ""}`}
+              onClick={() => {
+                setLinkMode((prev) => !prev);
+                setSelectedAP(null);
+              }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-              {linkMode ? "Mode liaison ON" : "Mode liaison"}
+              {linkMode ? "Mode contrainte actif" : "Mode contrainte"}
             </button>
 
-            <button className="btn btn-default" onClick={handleRandomize}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg>
+            <button className="btn" onClick={handleRandomize}>
               Canaux aléatoires
             </button>
 
-            <button className={`btn btn-run ${running ? "btn-running" : ""}`} onClick={handleRun} disabled={running}>
-              {running ? (
-                <><span className="spinner" /> Calcul…</>
-              ) : (
-                <><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>Lancer Min-Conflicts</>
-              )}
+            <button className="btn btn-run" onClick={handleStartSimulation}>
+              Lancer la simulation
             </button>
 
             <button className="btn btn-danger" onClick={handleReset}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.1"/></svg>
-              Reset
+              Réinitialiser
             </button>
           </div>
 
-          {/* Canvas */}
           <div
             ref={canvasRef}
-            className={`canvas ${linkMode ? "canvas-linkmode" : ""} ${dragging ? "canvas-dragging" : ""}`}
+            className={`canvas ${linkMode ? "canvas-linkmode" : ""} ${
+              dragging ? "canvas-dragging" : ""
+            }`}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
             onDoubleClick={handleDoubleClick}
           >
             <div className="canvas-inner">
-              {/* SVG liens */}
               <svg className="links-svg">
-                {/* Lignes de signal (arc glow) */}
-                <defs>
-                  <filter id="glow-red">
-                    <feGaussianBlur stdDeviation="3" result="blur"/>
-                    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-                  </filter>
-                  <filter id="glow-blue">
-                    <feGaussianBlur stdDeviation="2" result="blur"/>
-                    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-                  </filter>
-                </defs>
-
                 {links.map(([a, b]) => {
                   const apA = aps.find((ap) => ap.id === a);
                   const apB = aps.find((ap) => ap.id === b);
+
                   if (!apA || !apB) return null;
+
                   const conflict = isConflict(a, b);
+
                   return (
                     <g key={`${a}-${b}`}>
                       {conflict && (
                         <line
-                          x1={apA.x} y1={apA.y} x2={apB.x} y2={apB.y}
+                          x1={apA.x}
+                          y1={apA.y}
+                          x2={apB.x}
+                          y2={apB.y}
                           className="link-glow-conflict"
                         />
                       )}
+
                       <line
-                        x1={apA.x} y1={apA.y} x2={apB.x} y2={apB.y}
-                        className={conflict ? "link link-conflict" : "link link-ok"}
+                        x1={apA.x}
+                        y1={apA.y}
+                        x2={apB.x}
+                        y2={apB.y}
+                        className={
+                          conflict ? "link link-conflict" : "link link-ok"
+                        }
                       />
                     </g>
                   );
                 })}
 
-                {/* Ligne de preview lors de la sélection en mode liaison */}
-                {linkMode && selectedAP && (() => {
-                  const ap = aps.find((a) => a.id === selectedAP);
-                  return ap ? (
-                    <circle cx={ap.x} cy={ap.y} r="52" className="link-preview-ring" />
-                  ) : null;
-                })()}
+                {linkMode &&
+                  selectedAP &&
+                  (() => {
+                    const ap = aps.find((item) => item.id === selectedAP);
+
+                    return ap ? (
+                      <circle
+                        cx={ap.x}
+                        cy={ap.y}
+                        r="54"
+                        className="link-preview-ring"
+                      />
+                    ) : null;
+                  })()}
               </svg>
 
-              {/* Nœuds AP */}
               {aps.map((ap) => {
                 const color = CHANNEL_COLORS[ap.channel];
                 const hasConflict = conflictedIds.has(ap.id);
+                const isActiveSimulationAP = activeStep?.apId === ap.id;
+
                 return (
                   <div
                     key={ap.id}
@@ -405,37 +659,56 @@ export default function App() {
                       "ap-node",
                       selectedAP === ap.id ? "ap-selected" : "",
                       hasConflict ? "ap-conflict" : "ap-ok",
+                      isActiveSimulationAP ? "ap-simulation-active" : "",
                     ].join(" ")}
-                    style={{ left: ap.x, top: ap.y, "--ch-color": color }}
-                    onMouseDown={(e) => handleAPMouseDown(e, ap)}
+                    style={{
+                      left: ap.x,
+                      top: ap.y,
+                      "--ch-color": color,
+                    }}
+                    onMouseDown={(event) => handleAPMouseDown(event, ap)}
                   >
-                    {/* Anneau signal */}
-                    <div className="ap-ring" />
-                    <div className="ap-ring ap-ring-2" />
+                    <div className="ap-zone" />
 
-                    {/* Corps */}
                     <div className="ap-body">
                       <button
                         className="ap-delete"
-                        onClick={(e) => { e.stopPropagation(); handleDeleteAP(ap.id); }}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleDeleteAP(ap.id);
+                        }}
                         title="Supprimer"
-                      >×</button>
+                      >
+                        ×
+                      </button>
 
                       <div className="ap-icon">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                          <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
-                          <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
-                          <path d="M10.54 16.1a5 5 0 0 1 2.92 0"/>
-                          <line x1="12" y1="20" x2="12" y2="20"/>
+                        <svg
+                          width="21"
+                          height="21"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                        >
+                          <path d="M1.42 9a16 16 0 0 1 21.16 0" />
+                          <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+                          <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+                          <path d="M12 20h.01" />
                         </svg>
                       </div>
 
                       <strong className="ap-name">{ap.name}</strong>
-                      <span className="ap-channel">{CHANNEL_LABELS[ap.channel]}</span>
+                      <span className="ap-channel">
+                        {CHANNEL_LABELS[ap.channel]}
+                      </span>
                     </div>
 
-                    {/* Indicateur conflit */}
                     {hasConflict && <div className="ap-alert">!</div>}
+
+                    {isActiveSimulationAP && (
+                      <div className="simulation-badge">choisi</div>
+                    )}
                   </div>
                 );
               })}
@@ -443,183 +716,466 @@ export default function App() {
           </div>
 
           <div className="canvas-hint">
-            <span>💡</span>
-            Double-cliquer sur la zone pour ajouter un AP — Activer <strong>Mode liaison</strong> puis cliquer sur deux AP pour créer / supprimer une liaison d'interférence
+            Double-clique sur la zone pour ajouter un AP. Active le mode
+            contrainte, puis clique sur deux AP pour créer ou supprimer une
+            liaison d’interférence.
           </div>
+
+          {simulation && (
+            <div className="simulation-controls">
+              <div className="simulation-top">
+                <div>
+                  <strong>Simulation Min-Conflicts</strong>
+                  <span>
+                    Étape {playIndex} / {simulation.steps.length}
+                  </span>
+                </div>
+
+                <select
+                  value={simulationSpeed}
+                  onChange={(event) =>
+                    setSimulationSpeed(Number(event.target.value))
+                  }
+                >
+                  <option value={1300}>Lent</option>
+                  <option value={900}>Normal</option>
+                  <option value={450}>Rapide</option>
+                </select>
+              </div>
+
+              <div className="progress-bar">
+                <div style={{ width: `${progress}%` }} />
+              </div>
+
+              <div className="simulation-buttons">
+                <button className="btn" onClick={handlePlayPause}>
+                  {isPlaying ? "Pause" : "Play"}
+                </button>
+
+                <button className="btn" onClick={handleNextStep}>
+                  Étape suivante
+                </button>
+
+                <button className="btn" onClick={handleGoToEnd}>
+                  Aller à la fin
+                </button>
+
+                <button className="btn" onClick={handleRestartSimulation}>
+                  Rejouer
+                </button>
+              </div>
+
+              {activeStep ? (
+                <div className="current-step">
+                  <strong>
+                    #{activeStep.iteration} — {activeStep.apName} choisi au
+                    hasard
+                  </strong>
+
+                  <p>
+                    Canal précédent :{" "}
+                    <span
+                      style={{
+                        color: CHANNEL_COLORS[activeStep.previousChannel],
+                      }}
+                    >
+                      CH {activeStep.previousChannel}
+                    </span>{" "}
+                    → canal choisi :{" "}
+                    <span
+                      style={{ color: CHANNEL_COLORS[activeStep.chosenChannel] }}
+                    >
+                      CH {activeStep.chosenChannel}
+                    </span>
+                  </p>
+
+                  <div className="candidate-list">
+                    {activeStep.candidates.map((candidate) => (
+                      <div
+                        key={candidate.channel}
+                        className={
+                          candidate.channel === activeStep.chosenChannel
+                            ? "candidate candidate-selected"
+                            : "candidate"
+                        }
+                      >
+                        <span>CH {candidate.channel}</span>
+                        <strong>{candidate.score} conflit(s)</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="current-step">
+                  <strong>État initial</strong>
+                  <p>
+                    La simulation va sélectionner un point d’accès en conflit,
+                    tester les canaux disponibles, puis appliquer le meilleur
+                    choix.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
-        {/* ── PANNEAU LATÉRAL ── */}
         <aside className="side-panel">
-          {/* Tabs */}
           <div className="tabs">
-            <button className={`tab ${activeTab === "aps" ? "tab-active" : ""}`} onClick={() => setActiveTab("aps")}>
-              Access Points
+            <button
+              className={`tab ${activeTab === "aps" ? "tab-active" : ""}`}
+              onClick={() => setActiveTab("aps")}
+            >
+              AP
             </button>
-            <button className={`tab ${activeTab === "result" ? "tab-active" : ""}`} onClick={() => setActiveTab("result")}>
-              Résultat
-              {result && <span className={`tab-badge ${result.success ? "badge-ok" : "badge-warn"}`}>{result.success ? "✓" : "!"}</span>}
+
+            <button
+              className={`tab ${
+                activeTab === "constraints" ? "tab-active" : ""
+              }`}
+              onClick={() => setActiveTab("constraints")}
+            >
+              Contraintes
             </button>
-            <button className={`tab ${activeTab === "info" ? "tab-active" : ""}`} onClick={() => setActiveTab("info")}>
+
+            <button
+              className={`tab ${
+                activeTab === "simulation" ? "tab-active" : ""
+              }`}
+              onClick={() => setActiveTab("simulation")}
+            >
+              Simulation
+            </button>
+
+            <button
+              className={`tab ${activeTab === "info" ? "tab-active" : ""}`}
+              onClick={() => setActiveTab("info")}
+            >
               Principe
             </button>
           </div>
 
           <div className="tab-content">
-            {/* ── Tab AP ── */}
             {activeTab === "aps" && (
               <div className="ap-list">
                 {aps.length === 0 && (
-                  <p className="empty-msg">Aucun point d'accès. Cliquez sur "Ajouter AP" ou double-cliquez sur la zone.</p>
+                  <p className="empty-message">
+                    Aucun point d’accès. Clique sur “Ajouter AP”.
+                  </p>
                 )}
+
                 {aps.map((ap) => {
                   const color = CHANNEL_COLORS[ap.channel];
                   const hasConflict = conflictedIds.has(ap.id);
+
                   return (
-                    <div className={`ap-row ${hasConflict ? "ap-row-conflict" : ""}`} key={ap.id} style={{ "--ch-color": color }}>
+                    <div
+                      key={ap.id}
+                      className={`ap-row ${hasConflict ? "ap-row-conflict" : ""}`}
+                      style={{ "--ch-color": color }}
+                    >
                       <div className="ap-row-indicator" />
+
                       <div className="ap-row-info">
-                        <strong>{ap.name}</strong>
-                        <small>x={Math.round(ap.x)}, y={Math.round(ap.y)}</small>
+                        {editingId === ap.id ? (
+                          <input
+                            value={ap.name}
+                            className="name-input"
+                            autoFocus
+                            onChange={(event) =>
+                              handleNameChange(ap.id, event.target.value)
+                            }
+                            onBlur={() => setEditingId(null)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                setEditingId(null);
+                              }
+                            }}
+                          />
+                        ) : (
+                          <strong
+                            className="editable-name"
+                            onDoubleClick={() => setEditingId(ap.id)}
+                            title="Double-cliquer pour modifier"
+                          >
+                            {ap.name}
+                          </strong>
+                        )}
+
+                        <small>
+                          x={Math.round(ap.x)}, y={Math.round(ap.y)}
+                        </small>
                       </div>
+
                       <select
                         value={ap.channel}
-                        onChange={(e) => handleChannelChange(ap.id, e.target.value)}
+                        onChange={(event) =>
+                          handleChannelChange(ap.id, event.target.value)
+                        }
                         style={{ borderColor: color }}
                       >
-                        {CHANNELS.map((ch) => (
-                          <option key={ch} value={ch}>{CHANNEL_LABELS[ch]}</option>
+                        {CHANNELS.map((channel) => (
+                          <option key={channel} value={channel}>
+                            {CHANNEL_LABELS[channel]}
+                          </option>
                         ))}
                       </select>
-                      {hasConflict && <span className="conflict-badge">⚠</span>}
+
+                      {hasConflict && <span className="conflict-badge">!</span>}
                     </div>
                   );
                 })}
               </div>
             )}
 
-            {/* ── Tab Résultat ── */}
-            {activeTab === "result" && (
+            {activeTab === "constraints" && (
+              <div className="constraints-panel">
+                <div className="constraint-form">
+                  <label>Ajouter une contrainte d’interférence</label>
+
+                  <div className="constraint-inputs">
+                    <select
+                      value={constraintA}
+                      onChange={(event) => setConstraintA(event.target.value)}
+                    >
+                      <option value="">AP A</option>
+                      {aps.map((ap) => (
+                        <option key={ap.id} value={ap.id}>
+                          {ap.name}
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={constraintB}
+                      onChange={(event) => setConstraintB(event.target.value)}
+                    >
+                      <option value="">AP B</option>
+                      {aps.map((ap) => (
+                        <option key={ap.id} value={ap.id}>
+                          {ap.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button className="btn btn-full" onClick={handleAddConstraint}>
+                    Ajouter la contrainte
+                  </button>
+                </div>
+
+                <div className="constraint-list">
+                  {links.length === 0 ? (
+                    <p className="empty-message">
+                      Aucune contrainte. Ajoute une liaison entre deux AP.
+                    </p>
+                  ) : (
+                    links.map(([a, b]) => {
+                      const conflict = isConflict(a, b);
+
+                      return (
+                        <div
+                          className={`constraint-row ${
+                            conflict ? "constraint-conflict" : ""
+                          }`}
+                          key={`${a}-${b}`}
+                        >
+                          <div>
+                            <strong>
+                              {getAPName(a)} ↔ {getAPName(b)}
+                            </strong>
+                            <small>
+                              {conflict
+                                ? "Conflit actif : même canal"
+                                : "Aucun conflit"}
+                            </small>
+                          </div>
+
+                          <button
+                            className="remove-link"
+                            onClick={() => handleRemoveConstraint(a, b)}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+
+            {activeTab === "simulation" && (
               <div className="result-panel">
-                {!result ? (
+                {!simulation ? (
                   <div className="result-empty">
-                    <div className="result-empty-icon">▶</div>
-                    <p>Lance le calcul Min-Conflicts pour voir la solution proposée.</p>
+                    <strong>Aucune simulation lancée</strong>
+                    <p>
+                      Clique sur “Lancer la simulation” pour voir les choix de
+                      l’algorithme étape par étape.
+                    </p>
                   </div>
                 ) : (
                   <>
-                    <div className={`result-status ${result.success ? "status-success" : "status-warning"}`}>
-                      {result.success ? "✓ Solution optimale trouvée" : "⚠ Solution améliorée — conflits résiduels"}
-                    </div>
-
                     <div className="result-grid">
                       <div className="result-metric">
-                        <span className="rm-label">Conflits avant</span>
-                        <span className="rm-value rm-bad">{result.before}</span>
+                        <span>Conflits avant</span>
+                        <strong className="metric-bad">
+                          {simulation.summary.before}
+                        </strong>
                       </div>
+
                       <div className="result-metric">
-                        <span className="rm-label">Conflits après</span>
-                        <span className={`rm-value ${result.after === 0 ? "rm-good" : "rm-warn"}`}>{result.after}</span>
+                        <span>Conflits actuels</span>
+                        <strong
+                          className={conflicts === 0 ? "metric-good" : "metric-bad"}
+                        >
+                          {conflicts}
+                        </strong>
                       </div>
+
                       <div className="result-metric">
-                        <span className="rm-label">Itérations</span>
-                        <span className="rm-value rm-neutral">{result.iterations}</span>
+                        <span>Progression</span>
+                        <strong className="metric-neutral">{progress}%</strong>
                       </div>
+
                       <div className="result-metric">
-                        <span className="rm-label">Réduction</span>
-                        <span className="rm-value rm-good">
-                          {result.before > 0
-                            ? `${Math.round(((result.before - result.after) / result.before) * 100)}%`
-                            : "—"}
-                        </span>
+                        <span>Étapes</span>
+                        <strong className="metric-neutral">
+                          {playIndex}/{simulation.steps.length}
+                        </strong>
                       </div>
                     </div>
 
-                    {result.history.length > 0 && (
-                      <>
-                        <h3 className="log-title">Journal des modifications</h3>
-                        <div className="log-list">
-                          {result.history.slice(-12).map((entry, i) => (
-                            <div className="log-entry" key={i}>
-                              <span className="log-iter">#{entry.iteration}</span>
-                              <span className="log-name">{entry.apName}</span>
-                              <span className="log-ch" style={{ color: CHANNEL_COLORS[entry.channel] }}>
-                                → CH {entry.channel}
-                              </span>
-                              <span className="log-conf">{entry.conflicts} ⚡</span>
-                            </div>
-                          ))}
-                          {result.history.length > 12 && (
-                            <div className="log-entry log-more">…{result.history.length - 12} autres modifications</div>
-                          )}
-                        </div>
-                      </>
+                    {result && (
+                      <div
+                        className={`result-status ${
+                          result.success ? "status-success" : "status-warning"
+                        }`}
+                      >
+                        {result.success
+                          ? "Solution trouvée : aucun conflit restant."
+                          : "Simulation terminée avec des conflits restants."}
+                      </div>
                     )}
+
+                    <h3 className="log-title">Journal de résolution</h3>
+
+                    <div className="log-list">
+                      {visibleLogs.length === 0 ? (
+                        <p className="empty-message">
+                          Le journal s’affichera pendant la simulation.
+                        </p>
+                      ) : (
+                        visibleLogs.map((step) => (
+                          <div className="log-entry" key={step.iteration}>
+                            <span className="log-iter">#{step.iteration}</span>
+
+                            <span className="log-name">{step.apName}</span>
+
+                            <span
+                              className="log-ch"
+                              style={{
+                                color: CHANNEL_COLORS[step.chosenChannel],
+                              }}
+                            >
+                              CH {step.previousChannel} → CH{" "}
+                              {step.chosenChannel}
+                            </span>
+
+                            <span className="log-conf">
+                              {step.conflictsAfter} conflit(s)
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </>
                 )}
               </div>
             )}
 
-            {/* ── Tab Info ── */}
             {activeTab === "info" && (
               <div className="info-panel">
-                <div className="info-section">
-                  <h3>Modélisation CSP</h3>
-                  <div className="info-table">
-                    <div className="info-row">
-                      <span className="info-key">Variables</span>
-                      <span className="info-val">Points d'accès AP<sub>i</sub></span>
-                    </div>
-                    <div className="info-row">
-                      <span className="info-key">Domaine</span>
-                      <span className="info-val">Canaux {"{1, 6, 11}"}</span>
-                    </div>
-                    <div className="info-row">
-                      <span className="info-key">Contraintes</span>
-                      <span className="info-val">AP<sub>i</sub> ≠ AP<sub>j</sub> si reliés</span>
-                    </div>
-                    <div className="info-row">
-                      <span className="info-key">Objectif</span>
-                      <span className="info-val">min Σ conflits</span>
-                    </div>
-                  </div>
-                </div>
+                <section>
+                  <h3>Modélisation</h3>
 
-                <div className="info-section">
-                  <h3>Algorithme Min-Conflicts</h3>
+                  <div className="info-row">
+                    <span>Variables</span>
+                    <strong>Points d’accès Wi-Fi</strong>
+                  </div>
+
+                  <div className="info-row">
+                    <span>Valeurs</span>
+                    <strong>Canaux 1, 6 et 11</strong>
+                  </div>
+
+                  <div className="info-row">
+                    <span>Contraintes</span>
+                    <strong>Deux AP reliés ne doivent pas avoir le même canal</strong>
+                  </div>
+
+                  <div className="info-row">
+                    <span>Objectif</span>
+                    <strong>Minimiser le nombre total de conflits</strong>
+                  </div>
+                </section>
+
+                <section>
+                  <h3>Étapes de Min-Conflicts</h3>
+
                   <ol className="info-steps">
-                    <li>Initialisation aléatoire des canaux</li>
-                    <li>Sélection d'un AP en conflit au hasard</li>
-                    <li>Test de tous les canaux disponibles</li>
-                    <li>Attribution du canal minimisant les conflits</li>
-                    <li>Répétition jusqu'à 0 conflit ou max itérations</li>
+                    <li>Détecter les points d’accès en conflit.</li>
+                    <li>Choisir au hasard un AP parmi ceux en conflit.</li>
+                    <li>Tester chaque canal possible.</li>
+                    <li>Choisir le canal qui produit le moins de conflits.</li>
+                    <li>Répéter jusqu’à obtenir une solution correcte.</li>
                   </ol>
-                </div>
+                </section>
 
-                <div className="info-section">
+                <section>
                   <h3>Légende</h3>
+
                   <div className="legend">
-                    <div className="legend-row">
-                      <span className="legend-dot" style={{ background: "#00e5ff" }} /> Canal 1
+                    <div>
+                      <span
+                        className="legend-dot"
+                        style={{ background: CHANNEL_COLORS[1] }}
+                      />
+                      Canal 1
                     </div>
-                    <div className="legend-row">
-                      <span className="legend-dot" style={{ background: "#69ff47" }} /> Canal 6
+
+                    <div>
+                      <span
+                        className="legend-dot"
+                        style={{ background: CHANNEL_COLORS[6] }}
+                      />
+                      Canal 6
                     </div>
-                    <div className="legend-row">
-                      <span className="legend-dot" style={{ background: "#ff6b35" }} /> Canal 11
+
+                    <div>
+                      <span
+                        className="legend-dot"
+                        style={{ background: CHANNEL_COLORS[11] }}
+                      />
+                      Canal 11
                     </div>
-                    <div className="legend-row">
-                      <span className="legend-line conflict-line" /> Liaison en conflit
+
+                    <div>
+                      <span className="legend-line conflict-line" />
+                      Liaison en conflit
                     </div>
-                    <div className="legend-row">
-                      <span className="legend-line ok-line" /> Liaison sans conflit
+
+                    <div>
+                      <span className="legend-line ok-line" />
+                      Liaison sans conflit
                     </div>
                   </div>
-                </div>
+                </section>
               </div>
             )}
           </div>
         </aside>
-      </div>
+      </main>
     </div>
   );
 }
