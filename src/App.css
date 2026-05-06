@@ -59,7 +59,7 @@ button {
 }
 
 .app {
-  width: min(1440px, 100%);
+  width: min(1480px, 100%);
   min-height: 100vh;
   margin: 0 auto;
   padding: 24px 28px 40px;
@@ -164,9 +164,14 @@ button {
 
 .main-layout {
   display: grid;
-  grid-template-columns: 1fr 390px;
+  grid-template-columns: minmax(0, 1fr) 410px;
   gap: 20px;
   align-items: start;
+  transition: grid-template-columns 0.25s ease;
+}
+
+.panel-collapsed .main-layout {
+  grid-template-columns: minmax(0, 1fr) 56px;
 }
 
 .editor-section,
@@ -220,6 +225,11 @@ button {
   transform: translateY(0);
 }
 
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .btn-active {
   border-color: rgba(251, 191, 36, 0.55);
   background: rgba(251, 191, 36, 0.13);
@@ -253,9 +263,30 @@ button {
   width: 100%;
 }
 
+.btn-small {
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.zoom-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 8px;
+  margin-left: auto;
+}
+
+.zoom-tools span {
+  min-width: 48px;
+  color: var(--text-muted);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  text-align: center;
+}
+
 .canvas {
   position: relative;
-  height: 560px;
+  height: 620px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -263,6 +294,7 @@ button {
     radial-gradient(circle at 50% 42%, rgba(0, 229, 255, 0.04), transparent 36%),
     linear-gradient(180deg, rgba(13, 21, 37, 0.96), rgba(8, 12, 20, 0.98));
   user-select: none;
+  cursor: grab;
 }
 
 .canvas::before {
@@ -276,22 +308,33 @@ button {
 
 .canvas-linkmode {
   border-color: rgba(251, 191, 36, 0.48);
+  cursor: crosshair;
 }
 
-.canvas-dragging {
+.canvas-dragging,
+.canvas-panning {
   cursor: grabbing;
+}
+
+.canvas-world {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
 }
 
 .canvas-inner {
   position: absolute;
   inset: 0;
+  width: 2200px;
+  height: 1600px;
 }
 
 .links-svg {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  left: 0;
+  top: 0;
+  width: 2200px;
+  height: 1600px;
   pointer-events: none;
   overflow: visible;
 }
@@ -647,12 +690,39 @@ button {
 }
 
 .side-panel {
+  position: relative;
+  min-height: 680px;
   overflow: hidden;
+}
+
+.side-hidden {
+  min-height: 58px;
+}
+
+.panel-toggle {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 20;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: rgba(13, 21, 37, 0.95);
+  color: var(--text);
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.panel-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
+  padding-right: 48px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -661,7 +731,7 @@ button {
   padding: 10px 6px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   cursor: pointer;
   transition:
@@ -687,13 +757,16 @@ button {
   scrollbar-color: var(--border-light) transparent;
 }
 
-.ap-list {
+.ap-list,
+.channel-list,
+.constraint-list {
   display: flex;
   flex-direction: column;
   gap: 9px;
 }
 
-.ap-row {
+.ap-row,
+.channel-row {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -738,18 +811,7 @@ button {
   font-size: 10px;
 }
 
-.name-input {
-  width: 100%;
-  padding: 5px 7px;
-  border: 1px solid var(--accent);
-  border-radius: 7px;
-  background: rgba(0, 229, 255, 0.08);
-  color: white;
-  font-family: "JetBrains Mono", monospace;
-  font-size: 12px;
-  outline: none;
-}
-
+input,
 select {
   padding: 7px 9px;
   border: 1px solid var(--border);
@@ -760,6 +822,18 @@ select {
   font-size: 11px;
   font-weight: 700;
   outline: none;
+}
+
+input:focus,
+select:focus {
+  border-color: var(--accent);
+}
+
+.name-input {
+  width: 100%;
+  border-color: var(--accent);
+  background: rgba(0, 229, 255, 0.08);
+  color: white;
 }
 
 .conflict-badge {
@@ -783,37 +857,65 @@ select {
   line-height: 1.6;
 }
 
+.channels-panel,
 .constraints-panel {
   display: flex;
   flex-direction: column;
   gap: 15px;
 }
 
+.channel-form,
 .constraint-form {
   padding: 13px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: rgba(13, 21, 37, 0.78);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
 }
 
+.channel-form label,
 .constraint-form label {
   display: block;
-  margin-bottom: 9px;
   color: white;
   font-size: 13px;
   font-weight: 800;
 }
 
+.channel-color {
+  width: 16px;
+  height: 38px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.channel-edit {
+  flex: 1;
+  min-width: 0;
+}
+
+.channel-edit input {
+  width: 100%;
+}
+
+.channel-edit small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+}
+
+.small-color-input {
+  width: 38px;
+  height: 34px;
+  padding: 2px;
+}
+
 .constraint-inputs {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-bottom: 9px;
-}
-
-.constraint-list {
-  display: flex;
-  flex-direction: column;
   gap: 8px;
 }
 
@@ -1055,42 +1157,9 @@ select {
   font-weight: 800;
 }
 
-.legend {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-
-.legend div {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.legend-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 999px;
-}
-
-.legend-line {
-  width: 34px;
-  height: 3px;
-  border-radius: 999px;
-}
-
-.conflict-line {
-  background: var(--conflict-line);
-}
-
-.ok-line {
-  background: var(--ok-line);
-}
-
 @media (max-width: 1120px) {
-  .main-layout {
+  .main-layout,
+  .panel-collapsed .main-layout {
     grid-template-columns: 1fr;
   }
 
@@ -1107,6 +1176,10 @@ select {
   .stat-box {
     flex: 1;
   }
+
+  .side-panel {
+    min-height: auto;
+  }
 }
 
 @media (max-width: 680px) {
@@ -1115,11 +1188,12 @@ select {
   }
 
   .canvas {
-    height: 440px;
+    height: 460px;
   }
 
   .tabs {
     grid-template-columns: repeat(2, 1fr);
+    padding-right: 48px;
   }
 
   .header-stats {
@@ -1141,5 +1215,11 @@ select {
   .log-conf {
     grid-column: 2;
     text-align: left;
+  }
+
+  .zoom-tools {
+    width: 100%;
+    margin-left: 0;
+    padding-left: 0;
   }
 }
