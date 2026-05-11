@@ -23,8 +23,8 @@ const DEFAULT_1_APS = [
   { id: 1, name: "AP-01", x: 160, y: 140, channel: 1 },
   { id: 2, name: "AP-02", x: 390, y: 120, channel: 6 },
   { id: 3, name: "AP-03", x: 620, y: 210, channel: 11 },
-  { id: 4, name: "AP-04", x: 300, y: 360, channel: 6 },
-  { id: 5, name: "AP-05", x: 540, y: 430, channel: 11 },
+  { id: 4, name: "AP-04", x: 300, y: 360, channel: 1 },
+  { id: 5, name: "AP-05", x: 540, y: 430, channel: 6 },
 ];
 
 const DEFAULT_1_LINKS = [
@@ -35,73 +35,125 @@ const DEFAULT_1_LINKS = [
   [4, 5],
 ];
 
-function createDefaultTwoNetwork() {
-  const aps = [
-    { id: 1, name: "AP-01", x: 120, y: 100, channel: 1 },
-    { id: 2, name: "AP-02", x: 300, y: 95, channel: 1 },
-    { id: 3, name: "AP-03", x: 480, y: 110, channel: 6 },
-    { id: 4, name: "AP-04", x: 660, y: 95, channel: 6 },
-    { id: 5, name: "AP-05", x: 840, y: 110, channel: 3 },
+function clampNumber(value, min, max) {
+  const parsed = Number(value);
+  if (Number.isNaN(parsed)) return min;
+  return Math.min(max, Math.max(min, Math.floor(parsed)));
+}
 
-    { id: 6, name: "AP-06", x: 150, y: 260, channel: 5 },
-    { id: 7, name: "AP-07", x: 330, y: 250, channel: 8 },
-    { id: 8, name: "AP-08", x: 510, y: 265, channel: 10 },
-    { id: 9, name: "AP-09", x: 690, y: 250, channel: 11 },
-    { id: 10, name: "AP-10", x: 870, y: 265, channel: 11 },
+function makeLinkKey(a, b) {
+  const [x, y] = normalizeLink(a, b);
+  return `${x}-${y}`;
+}
 
-    { id: 11, name: "AP-11", x: 120, y: 420, channel: 2 },
-    { id: 12, name: "AP-12", x: 300, y: 415, channel: 7 },
-    { id: 13, name: "AP-13", x: 480, y: 430, channel: 4 },
-    { id: 14, name: "AP-14", x: 660, y: 415, channel: 9 },
-    { id: 15, name: "AP-15", x: 840, y: 430, channel: 5 },
+function channelsConflict(channelA, channelB) {
+  return Math.abs(Number(channelA) - Number(channelB)) < MIN_CHANNEL_GAP;
+}
 
-    { id: 16, name: "AP-16", x: 150, y: 580, channel: 1 },
-    { id: 17, name: "AP-17", x: 330, y: 570, channel: 6 },
-    { id: 18, name: "AP-18", x: 510, y: 585, channel: 11 },
-    { id: 19, name: "AP-19", x: 690, y: 570, channel: 3 },
-    { id: 20, name: "AP-20", x: 870, y: 585, channel: 8 },
-  ];
+function createGeneratedNetwork(apCountInput) {
+  const apCount = clampNumber(apCountInput, 2, 60);
+  // Randomise conflicts between 3 and 10
+  const conflictTarget = Math.floor(Math.random() * 8) + 3;
+  const maxLinks = (apCount * (apCount - 1)) / 2;
+  const safeChannels = [1, 6, 11];
 
-  const links = [
-    [1, 2],
-    [3, 4],
-    [5, 6],
-    [7, 8],
-    [9, 10],
+  // --- Scatter APs using a phyllotaxis (sunflower) spiral so they are
+  //     naturally spread, never aligned, and well-spaced. ---
+  const centerX = 860;
+  const centerY = 520;
+  const goldenAngle = 2.399963; // radians ≈ 137.5°
+  // Spacing grows with count so the cloud stays visible
+  const spacing = Math.max(120, Math.min(200, 600 / Math.sqrt(apCount)));
 
-    [1, 6],
-    [2, 7],
-    [3, 8],
-    [4, 9],
-    [5, 10],
+  const aps = Array.from({ length: apCount }, (_, index) => {
+    const id = index + 1;
+    const r = spacing * Math.sqrt(index + 0.5);
+    const theta = goldenAngle * index;
+    // Small random jitter so no two runs look identical
+    const jitter = spacing * 0.18;
+    return {
+      id,
+      name: `AP-${String(id).padStart(2, "0")}`,
+      x: Math.round(centerX + r * Math.cos(theta) + (Math.random() * jitter - jitter / 2)),
+      y: Math.round(centerY + r * Math.sin(theta) + (Math.random() * jitter - jitter / 2)),
+      channel: safeChannels[index % safeChannels.length],
+    };
+  });
 
-    [6, 11],
-    [7, 12],
-    [8, 13],
-    [9, 14],
-    [10, 15],
+  const links = [];
+  const used = new Set();
 
-    [11, 16],
-    [12, 17],
-    [13, 18],
-    [14, 19],
-    [15, 20],
+  function addLink(a, b) {
+    if (a === b) return false;
+    const [x, y] = normalizeLink(a, b);
+    const key = makeLinkKey(x, y);
+    if (used.has(key)) return false;
+    used.add(key);
+    links.push([x, y]);
+    return true;
+  }
 
-    [1, 7],
-    [2, 8],
-    [3, 9],
-    [4, 10],
-    [6, 12],
-    [7, 13],
-    [8, 14],
-    [9, 15],
-    [11, 17],
-    [12, 18],
-    [13, 19],
-    [14, 20],
-  ];
+  // --- Build a Euclidean-distance spanning tree (Prim's algorithm) so the
+  //     base connectivity is planar-ish and links don't criss-cross randomly ---
+  function dist(a, b) {
+    return Math.hypot(aps[a - 1].x - aps[b - 1].x, aps[a - 1].y - aps[b - 1].y);
+  }
 
-  return { aps, links };
+  const inTree = new Set([1]);
+  while (inTree.size < apCount) {
+    let bestDist = Infinity;
+    let bestA = -1, bestB = -1;
+    for (const a of inTree) {
+      for (let b = 1; b <= apCount; b++) {
+        if (inTree.has(b)) continue;
+        const d = dist(a, b);
+        if (d < bestDist) { bestDist = d; bestA = a; bestB = b; }
+      }
+    }
+    if (bestA === -1) break;
+    addLink(bestA, bestB);
+    inTree.add(bestB);
+  }
+
+  // --- Add a few extra "nearby" links for realism (at most apCount/2 extra) ---
+  // Sort all candidate pairs by distance
+  const candidates = [];
+  for (let i = 1; i <= apCount; i++) {
+    for (let j = i + 1; j <= apCount; j++) {
+      const key = makeLinkKey(i, j);
+      if (!used.has(key)) candidates.push({ a: i, b: j, d: dist(i, j) });
+    }
+  }
+  candidates.sort((x, y) => x.d - y.d);
+  const extraTarget = Math.min(Math.floor(apCount / 2), candidates.length);
+  for (let k = 0; k < extraTarget; k++) {
+    addLink(candidates[k].a, candidates[k].b);
+  }
+
+  // --- Inject conflicts: force conflicting channels on `conflictTarget` links ---
+  // Pick links at random to become conflict links
+  const shuffled = [...links].sort(() => Math.random() - 0.5);
+  const clampedConflicts = Math.min(conflictTarget, Math.min(maxLinks, links.length));
+  for (let k = 0; k < clampedConflicts; k++) {
+    const [a, b] = shuffled[k];
+    aps[a - 1].channel = 1;
+    aps[b - 1].channel = 1;
+  }
+
+  // --- Auto-scale viewport so the whole cloud fits the canvas (2200×1600) ---
+  const xs = aps.map(ap => ap.x);
+  const ys = aps.map(ap => ap.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const cloudW = maxX - minX + 200;
+  const cloudH = maxY - minY + 200;
+  const scale = Math.min(1, Math.min(1800 / cloudW, 1200 / cloudH));
+
+  return {
+    aps,
+    links,
+    viewport: { x: 0, y: 0, scale },
+  };
 }
 
 function normalizeLink(a, b) {
@@ -382,6 +434,10 @@ export default function App() {
   const [result, setResult] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [channelMenu, setChannelMenu] = useState(null);
+  const [showGenerateForm, setShowGenerateForm] = useState(false);
+  const [generateConfig, setGenerateConfig] = useState({
+    apCount: 6,
+  });
 
   const [constraintA, setConstraintA] = useState("");
   const [constraintB, setConstraintB] = useState("");
@@ -416,6 +472,54 @@ export default function App() {
       ? Math.round((playIndex / simulation.steps.length) * 100)
       : 0;
 
+  function getCenteredViewportForAps(targetAps, padding = 135) {
+    const items = Array.isArray(targetAps) && targetAps.length > 0 ? targetAps : aps;
+    const canvas = canvasRef.current;
+    const rect = canvas?.getBoundingClientRect();
+
+    const canvasWidth = rect?.width || 1000;
+    const canvasHeight = rect?.height || 620;
+
+    if (!items || items.length === 0) {
+      return { x: 0, y: 0, scale: 1 };
+    }
+
+    const xs = items.map((ap) => Number(ap.x));
+    const ys = items.map((ap) => Number(ap.y));
+
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+
+    const contentWidth = Math.max(1, maxX - minX + padding * 2);
+    const contentHeight = Math.max(1, maxY - minY + padding * 2);
+
+    const scale = Math.min(
+      1.15,
+      Math.max(0.25, Math.min(canvasWidth / contentWidth, canvasHeight / contentHeight))
+    );
+
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    return {
+      x: Math.round(canvasWidth / 2 - centerX * scale),
+      y: Math.round(canvasHeight / 2 - centerY * scale),
+      scale,
+    };
+  }
+
+  function centerSchema(targetAps = aps) {
+    setViewport(getCenteredViewportForAps(targetAps));
+  }
+
+  function centerSchemaNextFrame(targetAps = aps) {
+    requestAnimationFrame(() => {
+      setViewport(getCenteredViewportForAps(targetAps));
+    });
+  }
+
   function clearResultAndSimulation() {
     setResult(null);
     setSimulation(null);
@@ -429,6 +533,7 @@ export default function App() {
     setLinkMode(false);
     setEditingId(null);
     setChannelMenu(null);
+    setShowGenerateForm(false);
     setConstraintA("");
     setConstraintB("");
     setResult(null);
@@ -440,19 +545,39 @@ export default function App() {
   }
 
   function loadDefaultOne() {
-    setAps(cloneAps(DEFAULT_1_APS));
+    const nextAps = cloneAps(DEFAULT_1_APS);
+
+    setAps(nextAps);
     setLinks(DEFAULT_1_LINKS.map((link) => [...link]));
-    setViewport({ x: 0, y: 0, scale: 1 });
+    setViewport(getCenteredViewportForAps(nextAps));
     clearAllRuntimeStates();
   }
 
-  function loadDefaultTwo() {
-    const complex = createDefaultTwoNetwork();
+  function handleApplyGenerate(event) {
+    event.preventDefault();
 
-    setAps(cloneAps(complex.aps));
-    setLinks(complex.links.map((link) => [...link]));
-    setViewport({ x: -40, y: -20, scale: 0.75 });
-    clearAllRuntimeStates();
+    const generated = createGeneratedNetwork(
+      generateConfig.apCount
+    );
+
+    const nextAps = cloneAps(generated.aps);
+
+    setAps(nextAps);
+    setLinks(generated.links.map((link) => [...link]));
+    setViewport(getCenteredViewportForAps(nextAps));
+    setSelectedAP(null);
+    setLinkMode(false);
+    setEditingId(null);
+    setChannelMenu(null);
+    setShowGenerateForm(false);
+    setConstraintA("");
+    setConstraintB("");
+    setResult(null);
+    setSimulation(null);
+    setPlayIndex(0);
+    setIsPlaying(false);
+    setActiveStep(null);
+    setActiveTab("aps");
   }
 
   function getScreenPosition(event) {
@@ -514,6 +639,26 @@ export default function App() {
     };
   }, [handleWheel]);
 
+  useEffect(() => {
+    centerSchemaNextFrame(aps);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    centerSchemaNextFrame(aps);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelCollapsed]);
+
+  useEffect(() => {
+    const handleResize = () => centerSchemaNextFrame(aps);
+
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [aps]);
+
   function handleAddAP() {
     const nextId = aps.length > 0 ? Math.max(...aps.map((ap) => ap.id)) + 1 : 1;
 
@@ -525,7 +670,10 @@ export default function App() {
       channel: CHANNELS[Math.floor(Math.random() * CHANNELS.length)].id,
     };
 
-    setAps((prev) => [...prev, newAP]);
+    const nextAps = [...aps, newAP];
+
+    setAps(nextAps);
+    centerSchema(nextAps);
     setChannelMenu(null);
     clearResultAndSimulation();
   }
@@ -544,14 +692,21 @@ export default function App() {
       channel: CHANNELS[Math.floor(Math.random() * CHANNELS.length)].id,
     };
 
-    setAps((prev) => [...prev, newAP]);
+    const nextAps = [...aps, newAP];
+
+    setAps(nextAps);
+    centerSchema(nextAps);
     setChannelMenu(null);
     clearResultAndSimulation();
   }
 
   function handleDeleteAP(id) {
-    setAps((prev) => prev.filter((ap) => ap.id !== id));
-    setLinks((prev) => prev.filter(([a, b]) => a !== id && b !== id));
+    const nextAps = aps.filter((ap) => ap.id !== id);
+    const nextLinks = links.filter(([a, b]) => a !== id && b !== id);
+
+    setAps(nextAps);
+    setLinks(nextLinks);
+    centerSchema(nextAps);
     setSelectedAP(null);
     setEditingId(null);
     setChannelMenu(null);
@@ -559,19 +714,22 @@ export default function App() {
   }
 
   function handleNameChange(apId, value) {
-    setAps((prev) =>
-      prev.map((ap) => (ap.id === apId ? { ...ap, name: value } : ap))
+    const nextAps = aps.map((ap) =>
+      ap.id === apId ? { ...ap, name: value } : ap
     );
+
+    setAps(nextAps);
+    centerSchema(nextAps);
     clearResultAndSimulation();
   }
 
   function handleChannelChange(apId, channel) {
-    setAps((prev) =>
-      prev.map((ap) =>
-        ap.id === apId ? { ...ap, channel: Number(channel) } : ap
-      )
+    const nextAps = aps.map((ap) =>
+      ap.id === apId ? { ...ap, channel: Number(channel) } : ap
     );
 
+    setAps(nextAps);
+    centerSchema(nextAps);
     setChannelMenu(null);
     clearResultAndSimulation();
   }
@@ -667,6 +825,7 @@ export default function App() {
 
   function handleMouseUp() {
     if (draggingAP) {
+      centerSchemaNextFrame(aps);
       clearResultAndSimulation();
     }
 
@@ -689,7 +848,7 @@ export default function App() {
   }
 
   function handleResetView() {
-    setViewport({ x: 0, y: 0, scale: 1 });
+    centerSchema(aps);
   }
 
   function handleSelectForLink(apId) {
@@ -715,6 +874,7 @@ export default function App() {
       return [...prev, [a, b]];
     });
 
+    centerSchema(aps);
     setSelectedAP(null);
     setChannelMenu(null);
     clearResultAndSimulation();
@@ -730,7 +890,8 @@ export default function App() {
     const exists = links.some((link) => sameLink(link, x, y));
 
     if (!exists) {
-      setLinks((prev) => [...prev, [x, y]]);
+      setLinks([...links, [x, y]]);
+      centerSchema(aps);
       clearResultAndSimulation();
     }
 
@@ -740,19 +901,20 @@ export default function App() {
   }
 
   function handleRemoveConstraint(a, b) {
-    setLinks((prev) => prev.filter((link) => !sameLink(link, a, b)));
+    setLinks(links.filter((link) => !sameLink(link, a, b)));
+    centerSchema(aps);
     setChannelMenu(null);
     clearResultAndSimulation();
   }
 
   function handleRandomize() {
-    setAps((prev) =>
-      prev.map((ap) => ({
-        ...ap,
-        channel: CHANNELS[Math.floor(Math.random() * CHANNELS.length)].id,
-      }))
-    );
+    const nextAps = aps.map((ap) => ({
+      ...ap,
+      channel: CHANNELS[Math.floor(Math.random() * CHANNELS.length)].id,
+    }));
 
+    setAps(nextAps);
+    centerSchema(nextAps);
     setChannelMenu(null);
     clearResultAndSimulation();
   }
@@ -771,6 +933,7 @@ export default function App() {
     setPlayIndex(0);
     setActiveStep(null);
     setAps(cloneAps(generated.initialAps));
+    centerSchema(generated.initialAps);
     setIsPlaying(generated.steps.length > 0);
     setActiveTab("simulation");
 
@@ -784,6 +947,7 @@ export default function App() {
 
     if (index <= 0) {
       setAps(cloneAps(simulation.initialAps));
+      centerSchema(simulation.initialAps);
       setActiveStep(null);
       setPlayIndex(0);
       return;
@@ -794,6 +958,7 @@ export default function App() {
     if (!step) return;
 
     setAps(cloneAps(step.afterAps));
+    centerSchema(step.afterAps);
     setActiveStep(step);
     setPlayIndex(index);
 
@@ -954,10 +1119,15 @@ export default function App() {
               </button>
 
               <button
-                className="btn btn-small btn-complex"
-                onClick={loadDefaultTwo}
+                className={`btn btn-small btn-complex ${
+                  showGenerateForm ? "btn-active" : ""
+                }`}
+                onClick={() => {
+                  setShowGenerateForm((prev) => !prev);
+                  setChannelMenu(null);
+                }}
               >
-                Défaut 2
+                Générer
               </button>
             </div>
 
@@ -974,6 +1144,35 @@ export default function App() {
               </button>
             </div>
           </div>
+
+          {showGenerateForm && (
+            <form className="generate-panel generate-panel-simple" onSubmit={handleApplyGenerate}>
+              <div className="generate-panel-head">
+                <strong>Générer un schéma</strong>
+                <span>Les conflits (3–10) sont randomisés automatiquement</span>
+              </div>
+
+              <label className="generate-field">
+                <span>Nombre de AP</span>
+                <input
+                  type="number"
+                  min="2"
+                  max="60"
+                  value={generateConfig.apCount}
+                  onChange={(event) =>
+                    setGenerateConfig((prev) => ({
+                      ...prev,
+                      apCount: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+
+              <button className="btn btn-run" type="submit">
+                Générer
+              </button>
+            </form>
+          )}
 
           <div
             ref={canvasRef}
@@ -1170,8 +1369,8 @@ export default function App() {
 
           <div className="canvas-hint">
             Rouge : conflit direct avec le même canal. Orange : conflit moyen
-            causé par des canaux trop proches. Double-clique sur un AP pour
-            modifier rapidement son canal.
+            causé par des canaux trop proches. Le schéma par défaut est sans
+            conflit ; le bouton Générer crée un réseau centré selon vos valeurs.
           </div>
 
           {simulation && (

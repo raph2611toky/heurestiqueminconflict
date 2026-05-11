@@ -378,6 +378,7 @@ button {
 
 .link {
   stroke-linecap: round;
+  stroke-linejoin: round;
   transition:
     stroke 0.28s ease,
     stroke-width 0.28s ease,
@@ -386,21 +387,21 @@ button {
 
 .link-ok {
   stroke: var(--ok-line);
-  stroke-width: 2.5;
-  opacity: 0.8;
+  stroke-width: 3;
+  opacity: 0.9;
 }
 
 .link-conflict-strong {
   stroke: var(--conflict-line);
-  stroke-width: 4;
-  stroke-dasharray: 9 6;
+  stroke-width: 4.5;
+  stroke-dasharray: 10 6;
   animation: dashMove 1.2s linear infinite;
 }
 
 .link-conflict-close {
   stroke: var(--close-line);
-  stroke-width: 3.2;
-  stroke-dasharray: 6 6;
+  stroke-width: 3.8;
+  stroke-dasharray: 7 6;
   animation: dashMove 1.5s linear infinite;
 }
 
@@ -1450,4 +1451,83 @@ select:focus {
 
 .link-glow-conflict-close {
   stroke: var(--orange);
+}
+.generate-panel {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(150px, 0.7fr) minmax(150px, 0.7fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin: 0 18px 15px;
+  padding: 14px;
+  border: 1px solid rgba(0, 229, 255, 0.18);
+  border-radius: var(--radius);
+  background: rgba(13, 21, 37, 0.86);
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  animation: menuPop 0.16s ease-out;
+}
+
+/* Simplified form with only apCount */
+.generate-panel-simple {
+  grid-template-columns: minmax(220px, 1.2fr) minmax(160px, 0.7fr) auto;
+}
+
+.generate-panel-head strong {
+  display: block;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.generate-panel-head span {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.generate-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.generate-field span {
+  color: var(--text-muted);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.generate-field input {
+  width: 100%;
+  min-height: 38px;
+  border-color: rgba(0, 229, 255, 0.2);
+}
+
+.generate-field input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.09);
+}
+
+@media (max-width: 920px) {
+  .generate-panel {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .generate-panel-head {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 680px) {
+  .generate-panel {
+    grid-template-columns: 1fr;
+    margin-left: 12px;
+    margin-right: 12px;
+  }
 }
