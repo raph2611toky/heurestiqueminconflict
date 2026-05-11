@@ -156,6 +156,120 @@ function createGeneratedNetwork(apCountInput) {
   };
 }
 
+function createAdditiveGeneratedNetwork(existingAps, existingLinks, apCountInput) {
+  const addCount = clampNumber(apCountInput, 1, 40);
+  const safeChannels = [1, 6, 11];
+  const currentAps = cloneAps(existingAps);
+  const currentLinks = existingLinks.map((link) => [...link]);
+  const nextStartId = currentAps.length > 0 ? Math.max(...currentAps.map((ap) => ap.id)) + 1 : 1;
+
+  const xs = currentAps.map((ap) => ap.x);
+  const ys = currentAps.map((ap) => ap.y);
+
+  const baseCenterX = xs.length ? (Math.min(...xs) + Math.max(...xs)) / 2 : 860;
+  const baseCenterY = ys.length ? (Math.min(...ys) + Math.max(...ys)) / 2 : 520;
+  const baseW = xs.length ? Math.max(...xs) - Math.min(...xs) : 520;
+  const baseH = ys.length ? Math.max(...ys) - Math.min(...ys) : 360;
+
+  const goldenAngle = 2.399963;
+  const spacing = Math.max(135, Math.min(220, 650 / Math.sqrt(Math.max(addCount, 1))));
+  const startRadius = Math.max(180, Math.min(520, Math.max(baseW, baseH) / 2 + 120));
+
+  const addedAps = Array.from({ length: addCount }, (_, index) => {
+    const id = nextStartId + index;
+    const theta = goldenAngle * (index + currentAps.length);
+    const r = startRadius + spacing * Math.sqrt(index + 0.5);
+    const jitter = spacing * 0.2;
+
+    return {
+      id,
+      name: `AP-${String(id).padStart(2, "0")}`,
+      x: Math.round(baseCenterX + r * Math.cos(theta) + (Math.random() * jitter - jitter / 2)),
+      y: Math.round(baseCenterY + r * Math.sin(theta) + (Math.random() * jitter - jitter / 2)),
+      channel: safeChannels[index % safeChannels.length],
+    };
+  });
+
+  const combinedAps = [...currentAps, ...addedAps];
+  const links = [...currentLinks];
+  const used = new Set(links.map(([a, b]) => makeLinkKey(a, b)));
+
+  function addLink(a, b) {
+    if (a === b) return false;
+    const [x, y] = normalizeLink(a, b);
+    const key = makeLinkKey(x, y);
+    if (used.has(key)) return false;
+    used.add(key);
+    links.push([x, y]);
+    return true;
+  }
+
+  function distById(aId, bId) {
+    const a = combinedAps.find((ap) => ap.id === aId);
+    const b = combinedAps.find((ap) => ap.id === bId);
+    if (!a || !b) return Infinity;
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  const allIdsBeforeAdd = currentAps.map((ap) => ap.id);
+  const newIds = addedAps.map((ap) => ap.id);
+
+  for (const newId of newIds) {
+    const candidates = combinedAps
+      .filter((ap) => ap.id !== newId)
+      .map((ap) => ({ id: ap.id, d: distById(newId, ap.id) }))
+      .sort((a, b) => a.d - b.d);
+
+    if (candidates[0]) addLink(newId, candidates[0].id);
+    if (candidates[1] && Math.random() < 0.65) addLink(newId, candidates[1].id);
+  }
+
+  const nearbyPairs = [];
+  for (let i = 0; i < combinedAps.length; i++) {
+    for (let j = i + 1; j < combinedAps.length; j++) {
+      const a = combinedAps[i].id;
+      const b = combinedAps[j].id;
+      if (!newIds.includes(a) && !newIds.includes(b)) continue;
+      if (used.has(makeLinkKey(a, b))) continue;
+      nearbyPairs.push({ a, b, d: distById(a, b) });
+    }
+  }
+
+  nearbyPairs.sort((a, b) => a.d - b.d);
+  const extraTarget = Math.min(Math.ceil(addCount / 2), nearbyPairs.length);
+  for (let i = 0; i < extraTarget; i++) addLink(nearbyPairs[i].a, nearbyPairs[i].b);
+
+  const randomConflictTarget = Math.floor(Math.random() * 8) + 3;
+  const newRelatedLinks = links.filter(([a, b]) => newIds.includes(a) || newIds.includes(b));
+  const shuffledConflictLinks = [...newRelatedLinks].sort(() => Math.random() - 0.5);
+  const maxPossibleConflicts = Math.min(randomConflictTarget, shuffledConflictLinks.length);
+
+  for (let i = 0; i < maxPossibleConflicts; i++) {
+    const [a, b] = shuffledConflictLinks[i];
+    const apA = combinedAps.find((ap) => ap.id === a);
+    const apB = combinedAps.find((ap) => ap.id === b);
+    if (!apA || !apB) continue;
+
+    const aIsNew = newIds.includes(a);
+    const bIsNew = newIds.includes(b);
+
+    if (aIsNew && !bIsNew) {
+      apA.channel = apB.channel;
+    } else if (!aIsNew && bIsNew) {
+      apB.channel = apA.channel;
+    } else {
+      const channel = safeChannels[Math.floor(Math.random() * safeChannels.length)];
+      apA.channel = channel;
+      apB.channel = channel;
+    }
+  }
+
+  return {
+    aps: combinedAps,
+    links,
+  };
+}
+
 function normalizeLink(a, b) {
   return a < b ? [a, b] : [b, a];
 }
@@ -437,6 +551,7 @@ export default function App() {
   const [showGenerateForm, setShowGenerateForm] = useState(false);
   const [generateConfig, setGenerateConfig] = useState({
     apCount: 6,
+    addMode: true,
   });
 
   const [constraintA, setConstraintA] = useState("");
@@ -556,9 +671,9 @@ export default function App() {
   function handleApplyGenerate(event) {
     event.preventDefault();
 
-    const generated = createGeneratedNetwork(
-      generateConfig.apCount
-    );
+    const generated = generateConfig.addMode
+      ? createAdditiveGeneratedNetwork(aps, links, generateConfig.apCount)
+      : createGeneratedNetwork(generateConfig.apCount);
 
     const nextAps = cloneAps(generated.aps);
 
@@ -1149,7 +1264,7 @@ export default function App() {
             <form className="generate-panel generate-panel-simple" onSubmit={handleApplyGenerate}>
               <div className="generate-panel-head">
                 <strong>Générer un schéma</strong>
-                <span>Les conflits (3–10) sont randomisés automatiquement</span>
+                <span>Ajout activé : conserve les AP existants. Désactivé : crée un nouveau réseau.</span>
               </div>
 
               <label className="generate-field">
@@ -1168,8 +1283,25 @@ export default function App() {
                 />
               </label>
 
+              <label className="generate-toggle">
+                <input
+                  type="checkbox"
+                  checked={generateConfig.addMode}
+                  onChange={(event) =>
+                    setGenerateConfig((prev) => ({
+                      ...prev,
+                      addMode: event.target.checked,
+                    }))
+                  }
+                />
+                <span className="generate-toggle-ui">
+                  <span />
+                </span>
+                <strong>Ajout</strong>
+              </label>
+
               <button className="btn btn-run" type="submit">
-                Générer
+                {generateConfig.addMode ? "Ajouter" : "Générer"}
               </button>
             </form>
           )}
@@ -1188,6 +1320,7 @@ export default function App() {
             <div
               className="canvas-world"
               style={{
+                "--ap-counter-scale": 1 / viewport.scale,
                 transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`,
               }}
             >
