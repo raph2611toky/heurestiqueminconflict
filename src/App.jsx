@@ -50,178 +50,282 @@ function channelsConflict(channelA, channelB) {
   return Math.abs(Number(channelA) - Number(channelB)) < MIN_CHANNEL_GAP;
 }
 
-function createGeneratedNetwork(apCountInput) {
-  const apCount = clampNumber(apCountInput, 2, 60);
-  // Randomise conflicts between 3 and 10
-  const conflictTarget = Math.floor(Math.random() * 8) + 3;
-  const maxLinks = (apCount * (apCount - 1)) / 2;
+function shuffledCopy(items) {
+  return [...items].sort(() => Math.random() - 0.5);
+}
+
+function createRectangularSpreadAps(count, startId = 1, options = {}) {
+  const apCount = clampNumber(count, 1, 80);
   const safeChannels = [1, 6, 11];
+  const editorRatio = 1.62;
+  const areaPerAp = 33000;
+  const width = Math.max(760, Math.min(1850, Math.sqrt(apCount * areaPerAp * editorRatio)));
+  const height = Math.max(470, Math.min(1120, width / editorRatio));
+  const centerX = options.centerX ?? 860;
+  const centerY = options.centerY ?? 520;
+  const left = centerX - width / 2;
+  const top = centerY - height / 2;
 
-  // --- Scatter APs using a phyllotaxis (sunflower) spiral so they are
-  //     naturally spread, never aligned, and well-spaced. ---
-  const centerX = 860;
-  const centerY = 520;
-  const goldenAngle = 2.399963; // radians ≈ 137.5°
-  // Spacing grows with count so the cloud stays visible
-  const spacing = Math.max(120, Math.min(200, 600 / Math.sqrt(apCount)));
+  const cols = Math.ceil(Math.sqrt(apCount * editorRatio));
+  const rows = Math.ceil(apCount / cols);
+  const cellW = width / cols;
+  const cellH = height / rows;
 
-  const aps = Array.from({ length: apCount }, (_, index) => {
-    const id = index + 1;
-    const r = spacing * Math.sqrt(index + 0.5);
-    const theta = goldenAngle * index;
-    // Small random jitter so no two runs look identical
-    const jitter = spacing * 0.18;
+  const cells = [];
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      cells.push({ row, col });
+    }
+  }
+
+  const orderedCells = shuffledCopy(cells);
+
+  return Array.from({ length: apCount }, (_, index) => {
+    const id = startId + index;
+    const cell = orderedCells[index];
+    const jitterX = (Math.random() - 0.5) * cellW * 0.46;
+    const jitterY = (Math.random() - 0.5) * cellH * 0.46;
+
     return {
       id,
       name: `AP-${String(id).padStart(2, "0")}`,
-      x: Math.round(centerX + r * Math.cos(theta) + (Math.random() * jitter - jitter / 2)),
-      y: Math.round(centerY + r * Math.sin(theta) + (Math.random() * jitter - jitter / 2)),
+      x: Math.round(left + (cell.col + 0.5) * cellW + jitterX),
+      y: Math.round(top + (cell.row + 0.5) * cellH + jitterY),
       channel: safeChannels[index % safeChannels.length],
     };
   });
+}
 
+function segmentsIntersect(a, b, c, d) {
+  function ccw(p1, p2, p3) {
+    return (p3.y - p1.y) * (p2.x - p1.x) > (p2.y - p1.y) * (p3.x - p1.x);
+  }
+
+  return ccw(a, c, d) !== ccw(b, c, d) && ccw(a, b, c) !== ccw(a, b, d);
+}
+
+function linkWouldCross(candidateA, candidateB, links, apsById) {
+  const a = apsById.get(candidateA);
+  const b = apsById.get(candidateB);
+  if (!a || !b) return false;
+
+  for (const [x, y] of links) {
+    if (x === candidateA || x === candidateB || y === candidateA || y === candidateB) {
+      continue;
+    }
+
+    const c = apsById.get(x);
+    const d = apsById.get(y);
+    if (!c || !d) continue;
+
+    if (segmentsIntersect(a, b, c, d)) return true;
+  }
+
+  return false;
+}
+
+function createCleanLinks(aps, targetExtraRatio = 0.65) {
   const links = [];
   const used = new Set();
+  const apsById = new Map(aps.map((ap) => [ap.id, ap]));
+  const ids = aps.map((ap) => ap.id);
 
-  function addLink(a, b) {
+  function distance(aId, bId) {
+    const a = apsById.get(aId);
+    const b = apsById.get(bId);
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  function addLink(a, b, avoidCrossing = true) {
     if (a === b) return false;
     const [x, y] = normalizeLink(a, b);
     const key = makeLinkKey(x, y);
     if (used.has(key)) return false;
+    if (avoidCrossing && linkWouldCross(x, y, links, apsById)) return false;
     used.add(key);
     links.push([x, y]);
     return true;
   }
 
-  // --- Build a Euclidean-distance spanning tree (Prim's algorithm) so the
-  //     base connectivity is planar-ish and links don't criss-cross randomly ---
-  function dist(a, b) {
-    return Math.hypot(aps[a - 1].x - aps[b - 1].x, aps[a - 1].y - aps[b - 1].y);
-  }
+  if (ids.length <= 1) return links;
 
-  const inTree = new Set([1]);
-  while (inTree.size < apCount) {
-    let bestDist = Infinity;
-    let bestA = -1, bestB = -1;
+  const inTree = new Set([ids[0]]);
+  while (inTree.size < ids.length) {
+    let best = null;
+
     for (const a of inTree) {
-      for (let b = 1; b <= apCount; b++) {
+      for (const b of ids) {
         if (inTree.has(b)) continue;
-        const d = dist(a, b);
-        if (d < bestDist) { bestDist = d; bestA = a; bestB = b; }
+        const d = distance(a, b);
+        if (!best || d < best.d) best = { a, b, d };
       }
     }
-    if (bestA === -1) break;
-    addLink(bestA, bestB);
-    inTree.add(bestB);
+
+    if (!best) break;
+    if (!addLink(best.a, best.b, true)) addLink(best.a, best.b, false);
+    inTree.add(best.b);
   }
 
-  // --- Add a few extra "nearby" links for realism (at most apCount/2 extra) ---
-  // Sort all candidate pairs by distance
   const candidates = [];
-  for (let i = 1; i <= apCount; i++) {
-    for (let j = i + 1; j <= apCount; j++) {
-      const key = makeLinkKey(i, j);
-      if (!used.has(key)) candidates.push({ a: i, b: j, d: dist(i, j) });
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      const a = ids[i];
+      const b = ids[j];
+      if (!used.has(makeLinkKey(a, b))) {
+        candidates.push({ a, b, d: distance(a, b) });
+      }
     }
   }
+
   candidates.sort((x, y) => x.d - y.d);
-  const extraTarget = Math.min(Math.floor(apCount / 2), candidates.length);
-  for (let k = 0; k < extraTarget; k++) {
-    addLink(candidates[k].a, candidates[k].b);
+  const extraTarget = Math.min(Math.ceil(ids.length * targetExtraRatio), candidates.length);
+  let added = 0;
+
+  for (const item of candidates) {
+    if (added >= extraTarget) break;
+    if (addLink(item.a, item.b, true)) added++;
   }
 
-  // --- Inject conflicts: force conflicting channels on `conflictTarget` links ---
-  // Pick links at random to become conflict links
-  const shuffled = [...links].sort(() => Math.random() - 0.5);
-  const clampedConflicts = Math.min(conflictTarget, Math.min(maxLinks, links.length));
-  for (let k = 0; k < clampedConflicts; k++) {
-    const [a, b] = shuffled[k];
-    aps[a - 1].channel = 1;
-    aps[b - 1].channel = 1;
+  return links;
+}
+
+function injectRandomConflicts(aps, links, conflictTarget) {
+  const safeChannels = [1, 6, 11];
+  const shuffled = shuffledCopy(links);
+  const target = Math.min(conflictTarget, shuffled.length);
+
+  for (let i = 0; i < target; i++) {
+    const [a, b] = shuffled[i];
+    const apA = aps.find((ap) => ap.id === a);
+    const apB = aps.find((ap) => ap.id === b);
+    if (!apA || !apB) continue;
+
+    if (Math.random() < 0.65) {
+      const ch = safeChannels[Math.floor(Math.random() * safeChannels.length)];
+      apA.channel = ch;
+      apB.channel = ch;
+    } else {
+      const base = Math.floor(Math.random() * 7) + 1;
+      apA.channel = base;
+      apB.channel = Math.min(11, base + Math.floor(Math.random() * 4) + 1);
+    }
   }
+}
 
-  // --- Auto-scale viewport so the whole cloud fits the canvas (2200×1600) ---
-  const xs = aps.map(ap => ap.x);
-  const ys = aps.map(ap => ap.y);
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const minY = Math.min(...ys), maxY = Math.max(...ys);
-  const cloudW = maxX - minX + 200;
-  const cloudH = maxY - minY + 200;
-  const scale = Math.min(1, Math.min(1800 / cloudW, 1200 / cloudH));
+function createGeneratedNetwork(apCountInput) {
+  const apCount = clampNumber(apCountInput, 2, 80);
+  const conflictTarget = Math.floor(Math.random() * 8) + 3;
+  const aps = createRectangularSpreadAps(apCount, 1);
+  const links = createCleanLinks(aps, 0.72);
 
-  return {
-    aps,
-    links,
-    viewport: { x: 0, y: 0, scale },
-  };
+  injectRandomConflicts(aps, links, conflictTarget);
+
+  return { aps, links };
 }
 
 function createAdditiveGeneratedNetwork(existingAps, existingLinks, apCountInput) {
-  const addCount = clampNumber(apCountInput, 1, 40);
-  const safeChannels = [1, 6, 11];
+  const addCount = clampNumber(apCountInput, 1, 50);
   const currentAps = cloneAps(existingAps);
   const currentLinks = existingLinks.map((link) => [...link]);
   const nextStartId = currentAps.length > 0 ? Math.max(...currentAps.map((ap) => ap.id)) + 1 : 1;
 
-  const xs = currentAps.map((ap) => ap.x);
-  const ys = currentAps.map((ap) => ap.y);
+  const allExistingXs = currentAps.map((ap) => ap.x);
+  const allExistingYs = currentAps.map((ap) => ap.y);
+  const existingCenterX = allExistingXs.length
+    ? (Math.min(...allExistingXs) + Math.max(...allExistingXs)) / 2
+    : 860;
+  const existingCenterY = allExistingYs.length
+    ? (Math.min(...allExistingYs) + Math.max(...allExistingYs)) / 2
+    : 520;
 
-  const baseCenterX = xs.length ? (Math.min(...xs) + Math.max(...xs)) / 2 : 860;
-  const baseCenterY = ys.length ? (Math.min(...ys) + Math.max(...ys)) / 2 : 520;
-  const baseW = xs.length ? Math.max(...xs) - Math.min(...xs) : 520;
-  const baseH = ys.length ? Math.max(...ys) - Math.min(...ys) : 360;
+  const generatedAps = createRectangularSpreadAps(
+    currentAps.length + addCount,
+    1,
+    { centerX: existingCenterX, centerY: existingCenterY }
+  );
 
-  const goldenAngle = 2.399963;
-  const spacing = Math.max(135, Math.min(220, 650 / Math.sqrt(Math.max(addCount, 1))));
-  const startRadius = Math.max(180, Math.min(520, Math.max(baseW, baseH) / 2 + 120));
+  const existingByIndex = currentAps.map((ap, index) => ({ ...ap, index }));
+  const freeGeneratedSlots = generatedAps.filter((slot) => {
+    const nearestExisting = Math.min(
+      ...existingByIndex.map((ap) => Math.hypot(ap.x - slot.x, ap.y - slot.y))
+    );
+    return !Number.isFinite(nearestExisting) || nearestExisting > 145;
+  });
 
-  const addedAps = Array.from({ length: addCount }, (_, index) => {
-    const id = nextStartId + index;
-    const theta = goldenAngle * (index + currentAps.length);
-    const r = startRadius + spacing * Math.sqrt(index + 0.5);
-    const jitter = spacing * 0.2;
+  let candidateSlots = freeGeneratedSlots.length >= addCount ? freeGeneratedSlots : generatedAps;
+  candidateSlots = shuffledCopy(candidateSlots);
 
-    return {
+  const usedPositions = [...currentAps];
+  const addedAps = [];
+
+  for (const slot of candidateSlots) {
+    if (addedAps.length >= addCount) break;
+
+    const nearest = usedPositions.length
+      ? Math.min(...usedPositions.map((ap) => Math.hypot(ap.x - slot.x, ap.y - slot.y)))
+      : Infinity;
+
+    if (nearest < 120 && candidateSlots.length > addCount) continue;
+
+    const id = nextStartId + addedAps.length;
+    const ap = {
       id,
       name: `AP-${String(id).padStart(2, "0")}`,
-      x: Math.round(baseCenterX + r * Math.cos(theta) + (Math.random() * jitter - jitter / 2)),
-      y: Math.round(baseCenterY + r * Math.sin(theta) + (Math.random() * jitter - jitter / 2)),
-      channel: safeChannels[index % safeChannels.length],
+      x: slot.x,
+      y: slot.y,
+      channel: [1, 6, 11][addedAps.length % 3],
     };
-  });
+
+    addedAps.push(ap);
+    usedPositions.push(ap);
+  }
+
+  while (addedAps.length < addCount) {
+    const id = nextStartId + addedAps.length;
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 260 + addedAps.length * 45;
+    const ap = {
+      id,
+      name: `AP-${String(id).padStart(2, "0")}`,
+      x: Math.round(existingCenterX + Math.cos(angle) * radius),
+      y: Math.round(existingCenterY + Math.sin(angle) * radius),
+      channel: [1, 6, 11][addedAps.length % 3],
+    };
+    addedAps.push(ap);
+  }
 
   const combinedAps = [...currentAps, ...addedAps];
   const links = [...currentLinks];
   const used = new Set(links.map(([a, b]) => makeLinkKey(a, b)));
+  const apsById = new Map(combinedAps.map((ap) => [ap.id, ap]));
+  const newIds = addedAps.map((ap) => ap.id);
 
-  function addLink(a, b) {
+  function distance(aId, bId) {
+    const a = apsById.get(aId);
+    const b = apsById.get(bId);
+    if (!a || !b) return Infinity;
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  function addLink(a, b, avoidCrossing = true) {
     if (a === b) return false;
     const [x, y] = normalizeLink(a, b);
     const key = makeLinkKey(x, y);
     if (used.has(key)) return false;
+    if (avoidCrossing && linkWouldCross(x, y, links, apsById)) return false;
     used.add(key);
     links.push([x, y]);
     return true;
   }
 
-  function distById(aId, bId) {
-    const a = combinedAps.find((ap) => ap.id === aId);
-    const b = combinedAps.find((ap) => ap.id === bId);
-    if (!a || !b) return Infinity;
-    return Math.hypot(a.x - b.x, a.y - b.y);
-  }
-
-  const allIdsBeforeAdd = currentAps.map((ap) => ap.id);
-  const newIds = addedAps.map((ap) => ap.id);
-
   for (const newId of newIds) {
-    const candidates = combinedAps
+    const nearest = combinedAps
       .filter((ap) => ap.id !== newId)
-      .map((ap) => ({ id: ap.id, d: distById(newId, ap.id) }))
+      .map((ap) => ({ id: ap.id, d: distance(newId, ap.id) }))
       .sort((a, b) => a.d - b.d);
 
-    if (candidates[0]) addLink(newId, candidates[0].id);
-    if (candidates[1] && Math.random() < 0.65) addLink(newId, candidates[1].id);
+    if (nearest[0] && !addLink(newId, nearest[0].id, true)) addLink(newId, nearest[0].id, false);
+    if (nearest[1] && Math.random() < 0.58) addLink(newId, nearest[1].id, true);
   }
 
   const nearbyPairs = [];
@@ -231,43 +335,23 @@ function createAdditiveGeneratedNetwork(existingAps, existingLinks, apCountInput
       const b = combinedAps[j].id;
       if (!newIds.includes(a) && !newIds.includes(b)) continue;
       if (used.has(makeLinkKey(a, b))) continue;
-      nearbyPairs.push({ a, b, d: distById(a, b) });
+      nearbyPairs.push({ a, b, d: distance(a, b) });
     }
   }
 
   nearbyPairs.sort((a, b) => a.d - b.d);
-  const extraTarget = Math.min(Math.ceil(addCount / 2), nearbyPairs.length);
-  for (let i = 0; i < extraTarget; i++) addLink(nearbyPairs[i].a, nearbyPairs[i].b);
+  const extraTarget = Math.min(Math.ceil(addCount * 0.65), nearbyPairs.length);
+  let addedExtra = 0;
+  for (const pair of nearbyPairs) {
+    if (addedExtra >= extraTarget) break;
+    if (addLink(pair.a, pair.b, true)) addedExtra++;
+  }
 
   const randomConflictTarget = Math.floor(Math.random() * 8) + 3;
   const newRelatedLinks = links.filter(([a, b]) => newIds.includes(a) || newIds.includes(b));
-  const shuffledConflictLinks = [...newRelatedLinks].sort(() => Math.random() - 0.5);
-  const maxPossibleConflicts = Math.min(randomConflictTarget, shuffledConflictLinks.length);
+  injectRandomConflicts(combinedAps, newRelatedLinks, randomConflictTarget);
 
-  for (let i = 0; i < maxPossibleConflicts; i++) {
-    const [a, b] = shuffledConflictLinks[i];
-    const apA = combinedAps.find((ap) => ap.id === a);
-    const apB = combinedAps.find((ap) => ap.id === b);
-    if (!apA || !apB) continue;
-
-    const aIsNew = newIds.includes(a);
-    const bIsNew = newIds.includes(b);
-
-    if (aIsNew && !bIsNew) {
-      apA.channel = apB.channel;
-    } else if (!aIsNew && bIsNew) {
-      apB.channel = apA.channel;
-    } else {
-      const channel = safeChannels[Math.floor(Math.random() * safeChannels.length)];
-      apA.channel = channel;
-      apB.channel = channel;
-    }
-  }
-
-  return {
-    aps: combinedAps,
-    links,
-  };
+  return { aps: combinedAps, links };
 }
 
 function normalizeLink(a, b) {
