@@ -46,6 +46,40 @@ function makeLinkKey(a, b) {
   return `${x}-${y}`;
 }
 
+function getLinkEndpoints(link) {
+  if (Array.isArray(link)) {
+    return { a: Number(link[0]), b: Number(link[1]) };
+  }
+
+  return { a: Number(link.a), b: Number(link.b) };
+}
+
+function makeLinkKeyFromLink(link) {
+  const { a, b } = getLinkEndpoints(link);
+  return makeLinkKey(a, b);
+}
+
+function createLink(a, b, options = {}) {
+  const [x, y] = normalizeLink(Number(a), Number(b));
+
+  return {
+    a: x,
+    b: y,
+    manualCriteria: Boolean(options.manualCriteria),
+    distanceMeters: options.distanceMeters,
+    coverageOverlap: options.coverageOverlap,
+    sameUserZone: options.sameUserZone,
+  };
+}
+
+function cloneLink(link) {
+  return Array.isArray(link) ? [...link] : { ...link };
+}
+
+function cloneLinks(links) {
+  return links.map((link) => cloneLink(link));
+}
+
 function channelsConflict(channelA, channelB) {
   return Math.abs(Number(channelA) - Number(channelB)) < MIN_CHANNEL_GAP;
 }
@@ -57,45 +91,106 @@ function shuffledCopy(items) {
 function createRectangularSpreadAps(count, startId = 1, options = {}) {
   const apCount = clampNumber(count, 1, 80);
   const safeChannels = [1, 6, 11];
-  const editorRatio = 1.62;
-  const areaPerAp = 33000;
-  const width = Math.max(760, Math.min(1850, Math.sqrt(apCount * areaPerAp * editorRatio)));
-  const height = Math.max(470, Math.min(1120, width / editorRatio));
+
+  const screenPadding = options.screenPadding ?? 92;
+  const canvasWidth = options.canvasWidth ?? 1440;
+  const canvasHeight = options.canvasHeight ?? 620;
+  const editorRatio = Math.max(1.45, canvasWidth / Math.max(1, canvasHeight));
+
+  const densityScale = Math.min(2.8, Math.max(1, Math.sqrt(apCount / 12)));
+  const width = Math.max(900, (canvasWidth - screenPadding * 2) * densityScale);
+  const height = Math.max(430, (canvasHeight - screenPadding * 2) * densityScale);
+
   const centerX = options.centerX ?? 860;
   const centerY = options.centerY ?? 520;
   const left = centerX - width / 2;
   const top = centerY - height / 2;
 
-  const cols = Math.ceil(Math.sqrt(apCount * editorRatio));
-  const rows = Math.ceil(apCount / cols);
-  const cellW = width / cols;
-  const cellH = height / rows;
+  const baseCols = Math.ceil(Math.sqrt(apCount * editorRatio));
+  const baseRows = Math.ceil(apCount / baseCols);
+  const cols = Math.max(2, Math.ceil(baseCols * 1.25));
+  const rows = Math.max(2, Math.ceil(baseRows * 1.25));
 
-  const cells = [];
+  const candidateCells = [];
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
-      cells.push({ row, col });
+      const xRatio = cols === 1 ? 0.5 : col / (cols - 1);
+      const yRatio = rows === 1 ? 0.5 : row / (rows - 1);
+      candidateCells.push({
+        row,
+        col,
+        x: left + xRatio * width,
+        y: top + yRatio * height,
+        edgeScore:
+          Math.max(Math.abs(xRatio - 0.5), Math.abs(yRatio - 0.5)) +
+          (row === 0 || row === rows - 1 || col === 0 || col === cols - 1 ? 0.25 : 0),
+      });
     }
   }
 
-  const orderedCells = shuffledCopy(cells);
+  const selected = [];
+  const selectedKeys = new Set();
 
-  return Array.from({ length: apCount }, (_, index) => {
+  function addCell(cell) {
+    const key = `${cell.row}-${cell.col}`;
+    if (!selectedKeys.has(key) && selected.length < apCount) {
+      selectedKeys.add(key);
+      selected.push(cell);
+    }
+  }
+
+  const anchorCells = [
+    { row: 0, col: 0 },
+    { row: 0, col: cols - 1 },
+    { row: rows - 1, col: 0 },
+    { row: rows - 1, col: cols - 1 },
+    { row: Math.floor(rows / 2), col: 0 },
+    { row: Math.floor(rows / 2), col: cols - 1 },
+    { row: 0, col: Math.floor(cols / 2) },
+    { row: rows - 1, col: Math.floor(cols / 2) },
+    { row: Math.floor(rows / 2), col: Math.floor(cols / 2) },
+  ];
+
+  for (const anchor of anchorCells) {
+    const cell = candidateCells.find((item) => item.row === anchor.row && item.col === anchor.col);
+    if (cell) addCell(cell);
+  }
+
+  while (selected.length < apCount && selected.length < candidateCells.length) {
+    let best = null;
+
+    for (const cell of candidateCells) {
+      const key = `${cell.row}-${cell.col}`;
+      if (selectedKeys.has(key)) continue;
+
+      const nearestDistance = selected.length
+        ? Math.min(...selected.map((chosen) => Math.hypot(cell.x - chosen.x, cell.y - chosen.y)))
+        : 0;
+
+      const score = nearestDistance + cell.edgeScore * 90 + Math.random() * 18;
+      if (!best || score > best.score) best = { cell, score };
+    }
+
+    if (!best) break;
+    addCell(best.cell);
+  }
+
+  return selected.slice(0, apCount).map((cell, index) => {
     const id = startId + index;
-    const cell = orderedCells[index];
-    const jitterX = (Math.random() - 0.5) * cellW * 0.46;
-    const jitterY = (Math.random() - 0.5) * cellH * 0.46;
+    const cellW = cols > 1 ? width / (cols - 1) : width;
+    const cellH = rows > 1 ? height / (rows - 1) : height;
+    const jitterX = (Math.random() - 0.5) * cellW * 0.28;
+    const jitterY = (Math.random() - 0.5) * cellH * 0.28;
 
     return {
       id,
       name: `AP-${String(id).padStart(2, "0")}`,
-      x: Math.round(left + (cell.col + 0.5) * cellW + jitterX),
-      y: Math.round(top + (cell.row + 0.5) * cellH + jitterY),
+      x: Math.round(cell.x + jitterX),
+      y: Math.round(cell.y + jitterY),
       channel: safeChannels[index % safeChannels.length],
     };
   });
 }
-
 function segmentsIntersect(a, b, c, d) {
   function ccw(p1, p2, p3) {
     return (p3.y - p1.y) * (p2.x - p1.x) > (p2.y - p1.y) * (p3.x - p1.x);
@@ -109,7 +204,9 @@ function linkWouldCross(candidateA, candidateB, links, apsById) {
   const b = apsById.get(candidateB);
   if (!a || !b) return false;
 
-  for (const [x, y] of links) {
+  for (const link of links) {
+    const { a: x, b: y } = getLinkEndpoints(link);
+
     if (x === candidateA || x === candidateB || y === candidateA || y === candidateB) {
       continue;
     }
@@ -195,7 +292,7 @@ function injectRandomConflicts(aps, links, conflictTarget) {
   const target = Math.min(conflictTarget, shuffled.length);
 
   for (let i = 0; i < target; i++) {
-    const [a, b] = shuffled[i];
+    const { a, b } = getLinkEndpoints(shuffled[i]);
     const apA = aps.find((ap) => ap.id === a);
     const apB = aps.find((ap) => ap.id === b);
     if (!apA || !apB) continue;
@@ -212,10 +309,10 @@ function injectRandomConflicts(aps, links, conflictTarget) {
   }
 }
 
-function createGeneratedNetwork(apCountInput) {
+function createGeneratedNetwork(apCountInput, layoutOptions = {}) {
   const apCount = clampNumber(apCountInput, 2, 80);
   const conflictTarget = Math.floor(Math.random() * 8) + 3;
-  const aps = createRectangularSpreadAps(apCount, 1);
+  const aps = createRectangularSpreadAps(apCount, 1, layoutOptions);
   const links = createCleanLinks(aps, 0.72);
 
   injectRandomConflicts(aps, links, conflictTarget);
@@ -223,10 +320,10 @@ function createGeneratedNetwork(apCountInput) {
   return { aps, links };
 }
 
-function createAdditiveGeneratedNetwork(existingAps, existingLinks, apCountInput) {
+function createAdditiveGeneratedNetwork(existingAps, existingLinks, apCountInput, layoutOptions = {}) {
   const addCount = clampNumber(apCountInput, 1, 50);
   const currentAps = cloneAps(existingAps);
-  const currentLinks = existingLinks.map((link) => [...link]);
+  const currentLinks = cloneLinks(existingLinks);
   const nextStartId = currentAps.length > 0 ? Math.max(...currentAps.map((ap) => ap.id)) + 1 : 1;
 
   const allExistingXs = currentAps.map((ap) => ap.x);
@@ -241,7 +338,7 @@ function createAdditiveGeneratedNetwork(existingAps, existingLinks, apCountInput
   const generatedAps = createRectangularSpreadAps(
     currentAps.length + addCount,
     1,
-    { centerX: existingCenterX, centerY: existingCenterY }
+    { ...layoutOptions, centerX: existingCenterX, centerY: existingCenterY }
   );
 
   const existingByIndex = currentAps.map((ap, index) => ({ ...ap, index }));
@@ -296,7 +393,7 @@ function createAdditiveGeneratedNetwork(existingAps, existingLinks, apCountInput
 
   const combinedAps = [...currentAps, ...addedAps];
   const links = [...currentLinks];
-  const used = new Set(links.map(([a, b]) => makeLinkKey(a, b)));
+  const used = new Set(links.map((link) => makeLinkKeyFromLink(link)));
   const apsById = new Map(combinedAps.map((ap) => [ap.id, ap]));
   const newIds = addedAps.map((ap) => ap.id);
 
@@ -348,7 +445,10 @@ function createAdditiveGeneratedNetwork(existingAps, existingLinks, apCountInput
   }
 
   const randomConflictTarget = Math.floor(Math.random() * 8) + 3;
-  const newRelatedLinks = links.filter(([a, b]) => newIds.includes(a) || newIds.includes(b));
+  const newRelatedLinks = links.filter((link) => {
+    const { a, b } = getLinkEndpoints(link);
+    return newIds.includes(a) || newIds.includes(b);
+  });
   injectRandomConflicts(combinedAps, newRelatedLinks, randomConflictTarget);
 
   return { aps: combinedAps, links };
@@ -360,7 +460,8 @@ function normalizeLink(a, b) {
 
 function sameLink(link, a, b) {
   const [x, y] = normalizeLink(a, b);
-  return link[0] === x && link[1] === y;
+  const endpoints = getLinkEndpoints(link);
+  return endpoints.a === x && endpoints.b === y;
 }
 
 function cloneAps(aps) {
@@ -381,36 +482,123 @@ function getChannelLabel(channelId) {
   );
 }
 
-function getLinkConflict(apA, apB) {
+
+function roundTo(value, decimals = 2) {
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
+}
+
+function getLinkCriteria(apA, apB, manualCriteria = null) {
+  if (!apA || !apB) {
+    return {
+      distanceMeters: 0,
+      coverageOverlapPercent: 0,
+      coverageOverlapLabel: "Inconnue",
+      sameUserZone: false,
+      sameUserZoneLabel: "Non",
+      distanceWeight: 1,
+      coverageWeight: 1,
+      userWeight: 1,
+      priorityWeight: 1,
+      weight: 1,
+      networkImpact: "faible",
+    };
+  }
+
+  const pixelDistance = Math.hypot(apA.x - apB.x, apA.y - apB.y);
+  const automaticDistanceMeters = Math.max(1, Math.round(pixelDistance / 10));
+  const hasManualCriteria = Boolean(manualCriteria?.manualCriteria);
+  const distanceMeters = hasManualCriteria
+    ? Math.max(1, Math.round(Number(manualCriteria.distanceMeters) || automaticDistanceMeters))
+    : automaticDistanceMeters;
+
+  const coverageRadiusMeters = 28;
+  const overlapRaw = Math.max(0, 2 * coverageRadiusMeters - distanceMeters);
+  const automaticOverlapPercent = Math.min(
+    100,
+    Math.round((overlapRaw / (2 * coverageRadiusMeters)) * 100)
+  );
+
+  const coverageOverlapPercent = hasManualCriteria
+    ? manualCriteria.coverageOverlap
+      ? Math.max(35, automaticOverlapPercent)
+      : 0
+    : automaticOverlapPercent;
+
+  const sameUserZone = hasManualCriteria
+    ? Boolean(manualCriteria.sameUserZone)
+    : distanceMeters <= 32 || coverageOverlapPercent >= 35;
+
+  const distanceWeight =
+    distanceMeters <= 15 ? 2 : distanceMeters <= 28 ? 1.6 : distanceMeters <= 45 ? 1.25 : 1;
+
+  const coverageWeight =
+    coverageOverlapPercent >= 55
+      ? 1.65
+      : coverageOverlapPercent >= 30
+      ? 1.35
+      : coverageOverlapPercent > 0
+      ? 1.15
+      : 1;
+
+  const userWeight = sameUserZone ? 1.35 : 1;
+  const priorityWeight = distanceMeters <= 18 || (sameUserZone && coverageOverlapPercent >= 35) ? 1.25 : 1.08;
+  const weight = roundTo(distanceWeight * coverageWeight * userWeight * priorityWeight, 2);
+
+  return {
+    distanceMeters,
+    coverageOverlapPercent,
+    coverageOverlapLabel: coverageOverlapPercent > 0 ? `Oui (${coverageOverlapPercent}%)` : "Non",
+    sameUserZone,
+    sameUserZoneLabel: sameUserZone ? "Oui" : "Non",
+    distanceWeight,
+    coverageWeight,
+    userWeight,
+    priorityWeight,
+    weight,
+    networkImpact: weight >= 4 ? "très fort" : weight >= 2.5 ? "fort" : weight >= 1.5 ? "moyen" : "faible",
+    criteriaSource: hasManualCriteria ? "manuel" : "auto",
+  };
+}
+
+function getLinkConflict(apA, apB, criteria = getLinkCriteria(apA, apB)) {
   if (!apA || !apB) {
     return {
       hasConflict: false,
       type: "none",
       label: "Aucun conflit",
+      basePenalty: 0,
       penalty: 0,
       difference: null,
+      criteria,
     };
   }
 
   const difference = Math.abs(Number(apA.channel) - Number(apB.channel));
 
   if (difference === 0) {
+    const basePenalty = 10;
     return {
       hasConflict: true,
       type: "same",
       label: "Conflit direct : même canal",
-      penalty: 10,
+      basePenalty,
+      penalty: Math.ceil(basePenalty * criteria.weight),
       difference,
+      criteria,
     };
   }
 
   if (difference < MIN_CHANNEL_GAP) {
+    const basePenalty = MIN_CHANNEL_GAP - difference;
     return {
       hasConflict: true,
       type: "close",
       label: `Conflit moyen : canaux proches`,
-      penalty: MIN_CHANNEL_GAP - difference,
+      basePenalty,
+      penalty: Math.ceil(basePenalty * criteria.weight),
       difference,
+      criteria,
     };
   }
 
@@ -418,22 +606,28 @@ function getLinkConflict(apA, apB) {
     hasConflict: false,
     type: "ok",
     label: `Correct : écart ${difference}`,
+    basePenalty: 0,
     penalty: 0,
     difference,
+    criteria,
   };
 }
 
 function analyzeLinks(aps, links) {
-  return links.map(([a, b]) => {
+  return links.map((rawLink) => {
+    const { a, b } = getLinkEndpoints(rawLink);
     const apA = aps.find((ap) => ap.id === a);
     const apB = aps.find((ap) => ap.id === b);
-    const conflict = getLinkConflict(apA, apB);
+    const criteria = getLinkCriteria(apA, apB, rawLink);
+    const conflict = getLinkConflict(apA, apB, criteria);
 
     return {
       a,
       b,
+      rawLink,
       apA,
       apB,
+      criteria,
       ...conflict,
     };
   });
@@ -487,14 +681,17 @@ function conflictScoreForChannel(apId, channel, aps, links) {
   let conflictCount = 0;
   let penalty = 0;
   const details = [];
+  const originalAP = aps.find((ap) => ap.id === apId);
 
-  for (const [a, b] of links) {
+  for (const rawLink of links) {
+    const { a, b } = getLinkEndpoints(rawLink);
     if (a !== apId && b !== apId) continue;
 
     const neighborId = a === apId ? b : a;
     const neighbor = aps.find((ap) => ap.id === neighborId);
-    const simulatedAP = { id: apId, channel };
-    const result = getLinkConflict(simulatedAP, neighbor);
+    const simulatedAP = { ...originalAP, id: apId, channel };
+    const criteria = getLinkCriteria(simulatedAP, neighbor, rawLink);
+    const result = getLinkConflict(simulatedAP, neighbor, criteria);
 
     if (result.hasConflict) {
       conflictCount++;
@@ -505,6 +702,7 @@ function conflictScoreForChannel(apId, channel, aps, links) {
       neighborId,
       neighborName: neighbor?.name || `AP-${neighborId}`,
       neighborChannel: neighbor?.channel,
+      criteria,
       ...result,
     });
   }
@@ -614,7 +812,7 @@ export default function App() {
   const canvasRef = useRef(null);
 
   const [aps, setAps] = useState(cloneAps(DEFAULT_1_APS));
-  const [links, setLinks] = useState(DEFAULT_1_LINKS.map((link) => [...link]));
+  const [links, setLinks] = useState(cloneLinks(DEFAULT_1_LINKS));
 
   const [draggingAP, setDraggingAP] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
@@ -632,6 +830,13 @@ export default function App() {
   const [result, setResult] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [channelMenu, setChannelMenu] = useState(null);
+  const [linkTooltip, setLinkTooltip] = useState(null);
+  const [pendingLink, setPendingLink] = useState(null);
+  const [linkForm, setLinkForm] = useState({
+    distanceMeters: 20,
+    coverageOverlap: true,
+    sameUserZone: true,
+  });
   const [showGenerateForm, setShowGenerateForm] = useState(false);
   const [generateConfig, setGenerateConfig] = useState({
     apCount: 6,
@@ -671,7 +876,7 @@ export default function App() {
       ? Math.round((playIndex / simulation.steps.length) * 100)
       : 0;
 
-  function getCenteredViewportForAps(targetAps, padding = 135) {
+  function getCenteredViewportForAps(targetAps, padding = 92) {
     const items = Array.isArray(targetAps) && targetAps.length > 0 ? targetAps : aps;
     const canvas = canvasRef.current;
     const rect = canvas?.getBoundingClientRect();
@@ -732,6 +937,8 @@ export default function App() {
     setLinkMode(false);
     setEditingId(null);
     setChannelMenu(null);
+    setPendingLink(null);
+    setLinkTooltip(null);
     setShowGenerateForm(false);
     setConstraintA("");
     setConstraintB("");
@@ -743,11 +950,21 @@ export default function App() {
     setActiveTab("aps");
   }
 
+  function getCanvasLayoutOptions() {
+    const rect = canvasRef.current?.getBoundingClientRect();
+
+    return {
+      canvasWidth: rect?.width || 1440,
+      canvasHeight: rect?.height || 620,
+      screenPadding: 92,
+    };
+  }
+
   function loadDefaultOne() {
     const nextAps = cloneAps(DEFAULT_1_APS);
 
     setAps(nextAps);
-    setLinks(DEFAULT_1_LINKS.map((link) => [...link]));
+    setLinks(cloneLinks(DEFAULT_1_LINKS));
     setViewport(getCenteredViewportForAps(nextAps));
     clearAllRuntimeStates();
   }
@@ -755,19 +972,23 @@ export default function App() {
   function handleApplyGenerate(event) {
     event.preventDefault();
 
+    const layoutOptions = getCanvasLayoutOptions();
+
     const generated = generateConfig.addMode
-      ? createAdditiveGeneratedNetwork(aps, links, generateConfig.apCount)
-      : createGeneratedNetwork(generateConfig.apCount);
+      ? createAdditiveGeneratedNetwork(aps, links, generateConfig.apCount, layoutOptions)
+      : createGeneratedNetwork(generateConfig.apCount, layoutOptions);
 
     const nextAps = cloneAps(generated.aps);
 
     setAps(nextAps);
-    setLinks(generated.links.map((link) => [...link]));
+    setLinks(cloneLinks(generated.links));
     setViewport(getCenteredViewportForAps(nextAps));
     setSelectedAP(null);
     setLinkMode(false);
     setEditingId(null);
     setChannelMenu(null);
+    setPendingLink(null);
+    setLinkTooltip(null);
     setShowGenerateForm(false);
     setConstraintA("");
     setConstraintB("");
@@ -874,6 +1095,7 @@ export default function App() {
     setAps(nextAps);
     centerSchema(nextAps);
     setChannelMenu(null);
+    setPendingLink(null);
     clearResultAndSimulation();
   }
 
@@ -896,12 +1118,16 @@ export default function App() {
     setAps(nextAps);
     centerSchema(nextAps);
     setChannelMenu(null);
+    setPendingLink(null);
     clearResultAndSimulation();
   }
 
   function handleDeleteAP(id) {
     const nextAps = aps.filter((ap) => ap.id !== id);
-    const nextLinks = links.filter(([a, b]) => a !== id && b !== id);
+    const nextLinks = links.filter((link) => {
+      const { a, b } = getLinkEndpoints(link);
+      return a !== id && b !== id;
+    });
 
     setAps(nextAps);
     setLinks(nextLinks);
@@ -909,6 +1135,7 @@ export default function App() {
     setSelectedAP(null);
     setEditingId(null);
     setChannelMenu(null);
+    setPendingLink(null);
     clearResultAndSimulation();
   }
 
@@ -930,6 +1157,7 @@ export default function App() {
     setAps(nextAps);
     centerSchema(nextAps);
     setChannelMenu(null);
+    setPendingLink(null);
     clearResultAndSimulation();
   }
 
@@ -951,11 +1179,16 @@ export default function App() {
 
   function handleCanvasMouseDown(event) {
     setChannelMenu(null);
+    setLinkTooltip(null);
+    if (!event.target.closest(".link-criteria-popup")) {
+      setPendingLink(null);
+    }
 
     if (event.target.closest(".ap-node")) return;
     if (event.target.closest("button")) return;
     if (event.target.closest("select")) return;
     if (event.target.closest(".channel-floating-menu")) return;
+    if (event.target.closest(".link-criteria-popup")) return;
     if (linkMode) return;
 
     setIsPanning(true);
@@ -972,7 +1205,8 @@ export default function App() {
       event.target.closest("button") ||
       event.target.closest("input") ||
       event.target.closest("select") ||
-      event.target.closest(".channel-floating-menu")
+      event.target.closest(".channel-floating-menu") ||
+      event.target.closest(".link-criteria-popup")
     ) {
       return;
     }
@@ -1053,30 +1287,78 @@ export default function App() {
   function handleSelectForLink(apId) {
     if (!selectedAP) {
       setSelectedAP(apId);
+      setPendingLink(null);
       return;
     }
 
     if (selectedAP === apId) {
       setSelectedAP(null);
+      setPendingLink(null);
       return;
     }
 
     const [a, b] = normalizeLink(selectedAP, apId);
+    const exists = links.some((link) => sameLink(link, a, b));
 
-    setLinks((prev) => {
-      const exists = prev.some((link) => sameLink(link, a, b));
+    if (exists) {
+      setLinks((prev) => prev.filter((link) => !sameLink(link, a, b)));
+      centerSchema(aps);
+      setSelectedAP(null);
+      setPendingLink(null);
+      setChannelMenu(null);
+      clearResultAndSimulation();
+      return;
+    }
 
-      if (exists) {
-        return prev.filter((link) => !sameLink(link, a, b));
-      }
+    const apA = aps.find((ap) => ap.id === a);
+    const apB = aps.find((ap) => ap.id === b);
+    const criteria = getLinkCriteria(apA, apB);
 
-      return [...prev, [a, b]];
+    setLinkForm({
+      distanceMeters: criteria.distanceMeters,
+      coverageOverlap: criteria.coverageOverlapPercent > 0,
+      sameUserZone: criteria.sameUserZone,
     });
 
-    centerSchema(aps);
+    setPendingLink({
+      a,
+      b,
+      x: apA && apB ? (apA.x + apB.x) / 2 : 0,
+      y: apA && apB ? (apA.y + apB.y) / 2 : 0,
+    });
+
     setSelectedAP(null);
     setChannelMenu(null);
+    setLinkTooltip(null);
+  }
+
+  function handleApplyPendingLink(event) {
+    event.preventDefault();
+
+    if (!pendingLink) return;
+
+    const distanceMeters = Math.max(1, Math.round(Number(linkForm.distanceMeters) || 1));
+    const nextLink = createLink(pendingLink.a, pendingLink.b, {
+      manualCriteria: true,
+      distanceMeters,
+      coverageOverlap: Boolean(linkForm.coverageOverlap),
+      sameUserZone: Boolean(linkForm.sameUserZone),
+    });
+
+    setLinks((prev) => {
+      const exists = prev.some((link) => sameLink(link, pendingLink.a, pendingLink.b));
+      if (exists) return prev;
+      return [...prev, nextLink];
+    });
+
+    setPendingLink(null);
+    setChannelMenu(null);
+    centerSchema(aps);
     clearResultAndSimulation();
+  }
+
+  function handleCancelPendingLink() {
+    setPendingLink(null);
   }
 
   function handleAddConstraint() {
@@ -1089,7 +1371,7 @@ export default function App() {
     const exists = links.some((link) => sameLink(link, x, y));
 
     if (!exists) {
-      setLinks([...links, [x, y]]);
+      setLinks([...links, createLink(x, y)]);
       centerSchema(aps);
       clearResultAndSimulation();
     }
@@ -1103,6 +1385,7 @@ export default function App() {
     setLinks(links.filter((link) => !sameLink(link, a, b)));
     centerSchema(aps);
     setChannelMenu(null);
+    setPendingLink(null);
     clearResultAndSimulation();
   }
 
@@ -1115,6 +1398,7 @@ export default function App() {
     setAps(nextAps);
     centerSchema(nextAps);
     setChannelMenu(null);
+    setPendingLink(null);
     clearResultAndSimulation();
   }
 
@@ -1124,6 +1408,8 @@ export default function App() {
 
   function handleStartSimulation() {
     setChannelMenu(null);
+    setPendingLink(null);
+    setLinkTooltip(null);
 
     const generated = buildMinConflictsSimulation(aps, links, 200);
 
@@ -1239,7 +1525,25 @@ export default function App() {
       return "Conflit direct : même canal";
     }
 
-    return `Conflit moyen : écart ${link.difference} < ${MIN_CHANNEL_GAP}`;
+    return `Conflit indirect : écart ${link.difference} < ${MIN_CHANNEL_GAP}`;
+  }
+
+  function getLinkTooltipTitle(link) {
+    const criteria = link.criteria;
+    const conflictText = link.hasConflict ? link.label : "Aucun conflit";
+
+    return [
+      `${getAPName(link.a)} ↔ ${getAPName(link.b)}`,
+      `Distance : ${criteria.distanceMeters} m`,
+      `Couverture chevauchante : ${criteria.coverageOverlapLabel}`,
+      `Même zone d’utilisateurs : ${criteria.sameUserZoneLabel}`,
+      `Critères : ${criteria.criteriaSource === "manuel" ? "renseignés" : "automatiques"}`,
+      `Impact réseau : ${criteria.networkImpact}`,
+      `Poids multi-critère : ×${criteria.weight}`,
+      `Canaux : ${getChannelLabel(link.apA?.channel)} / ${getChannelLabel(link.apB?.channel)}`,
+      `État : ${conflictText}`,
+      `Score de liaison : ${link.penalty}`,
+    ].join("\n");
   }
 
   const currentChannelMenuAP = channelMenu
@@ -1420,6 +1724,10 @@ export default function App() {
                       (activeStep.apId === a || activeStep.apId === b) &&
                       link.hasConflict;
 
+                    const midX = (apA.x + apB.x) / 2;
+                    const midY = (apA.y + apB.y) / 2;
+                    const tooltipTitle = getLinkTooltipTitle(link);
+
                     return (
                       <g key={`${a}-${b}`}>
                         {link.hasConflict && (
@@ -1445,6 +1753,34 @@ export default function App() {
                             isActiveLink ? "link-active-step" : ""
                           }`}
                         />
+
+                        <line
+                          x1={apA.x}
+                          y1={apA.y}
+                          x2={apB.x}
+                          y2={apB.y}
+                          className="link-hover-zone"
+                          onMouseDown={(event) => event.stopPropagation()}
+                          onMouseEnter={() =>
+                            setLinkTooltip({
+                              key: `${a}-${b}`,
+                              x: midX,
+                              y: midY,
+                              link,
+                            })
+                          }
+                          onMouseMove={() =>
+                            setLinkTooltip({
+                              key: `${a}-${b}`,
+                              x: midX,
+                              y: midY,
+                              link,
+                            })
+                          }
+                          onMouseLeave={() => setLinkTooltip(null)}
+                        >
+                          <title>{tooltipTitle}</title>
+                        </line>
                       </g>
                     );
                   })}
@@ -1579,6 +1915,106 @@ export default function App() {
                       ))}
                     </div>
                   </div>
+                )}
+
+                {linkTooltip && (
+                  <div
+                    className="link-tooltip-card"
+                    style={{
+                      left: linkTooltip.x + 18,
+                      top: linkTooltip.y - 95,
+                    }}
+                    onMouseDown={(event) => event.stopPropagation()}
+                  >
+                    <strong>
+                      {getAPName(linkTooltip.link.a)} ↔ {getAPName(linkTooltip.link.b)}
+                    </strong>
+                    <span>Distance : {linkTooltip.link.criteria.distanceMeters} m</span>
+                    <span>
+                      Couverture chevauchante : {linkTooltip.link.criteria.coverageOverlapLabel}
+                    </span>
+                    <span>
+                      Même zone d’utilisateurs : {linkTooltip.link.criteria.sameUserZoneLabel}
+                    </span>
+                    <span>Critères : {linkTooltip.link.criteria.criteriaSource === "manuel" ? "renseignés manuellement" : "calculés automatiquement"}</span>
+                    <span>Impact réseau : {linkTooltip.link.criteria.networkImpact}</span>
+                    <span>Poids multi-critère : ×{linkTooltip.link.criteria.weight}</span>
+                    <span>Score de liaison : {linkTooltip.link.penalty}</span>
+                  </div>
+                )}
+
+                {pendingLink && (
+                  <form
+                    className="link-criteria-popup"
+                    style={{
+                      left: pendingLink.x + 20,
+                      top: pendingLink.y - 120,
+                    }}
+                    onSubmit={handleApplyPendingLink}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onDoubleClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="link-criteria-head">
+                      <strong>Nouvelle liaison</strong>
+                      <span>
+                        {getAPName(pendingLink.a)} ↔ {getAPName(pendingLink.b)}
+                      </span>
+                    </div>
+
+                    <label className="link-criteria-field">
+                      <span>Distance estimée en mètres</span>
+                      <input
+                        type="number"
+                        min="1"
+                        value={linkForm.distanceMeters}
+                        onChange={(event) =>
+                          setLinkForm((prev) => ({
+                            ...prev,
+                            distanceMeters: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+
+                    <label className="link-criteria-toggle">
+                      <input
+                        type="checkbox"
+                        checked={linkForm.coverageOverlap}
+                        onChange={(event) =>
+                          setLinkForm((prev) => ({
+                            ...prev,
+                            coverageOverlap: event.target.checked,
+                          }))
+                        }
+                      />
+                      <span className="link-criteria-switch"><i /></span>
+                      <strong>Zone de couverture chevauchante</strong>
+                    </label>
+
+                    <label className="link-criteria-toggle">
+                      <input
+                        type="checkbox"
+                        checked={linkForm.sameUserZone}
+                        onChange={(event) =>
+                          setLinkForm((prev) => ({
+                            ...prev,
+                            sameUserZone: event.target.checked,
+                          }))
+                        }
+                      />
+                      <span className="link-criteria-switch"><i /></span>
+                      <strong>Même zone d’utilisateurs</strong>
+                    </label>
+
+                    <div className="link-criteria-actions">
+                      <button className="btn btn-small" type="button" onClick={handleCancelPendingLink}>
+                        Annuler
+                      </button>
+                      <button className="btn btn-small btn-run" type="submit">
+                        Appliquer
+                      </button>
+                    </div>
+                  </form>
                 )}
               </div>
             </div>
@@ -1921,7 +2357,11 @@ export default function App() {
                             <strong>
                               {getAPName(link.a)} ↔ {getAPName(link.b)}
                             </strong>
-                            <small>{getConstraintStatusText(link)}</small>
+                            <small>
+                              {getConstraintStatusText(link)} · {link.criteria.distanceMeters} m ·
+                              chevauchement {link.criteria.coverageOverlapPercent}% · même zone {link.criteria.sameUserZoneLabel} ·
+                              score {link.penalty}
+                            </small>
                           </div>
 
                           <button
@@ -2051,9 +2491,9 @@ export default function App() {
                       </div>
 
                       <div className="info-row">
-                        <span>Orange</span>
+                        <span>Jaune</span>
                         <strong>
-                          Conflit moyen : canaux proches, écart inférieur à{" "}
+                          Conflit indirect : canaux proches, écart inférieur à{" "}
                           {MIN_CHANNEL_GAP}
                         </strong>
                       </div>
