@@ -1,39 +1,108 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
-const INITIAL_CHANNELS = [
+const MIN_CHANNEL_GAP = 5;
+const CHANNEL_WIDTH_MHZ = "20–22 MHz";
+const CHANNEL_SPACING_MHZ = "5 MHz";
+
+const CHANNELS = [
   { id: 1, label: "CH 1", color: "#00e5ff" },
+  { id: 2, label: "CH 2", color: "#38bdf8" },
+  { id: 3, label: "CH 3", color: "#60a5fa" },
+  { id: 4, label: "CH 4", color: "#818cf8" },
+  { id: 5, label: "CH 5", color: "#a78bfa" },
   { id: 6, label: "CH 6", color: "#69ff47" },
+  { id: 7, label: "CH 7", color: "#34d399" },
+  { id: 8, label: "CH 8", color: "#fbbf24" },
+  { id: 9, label: "CH 9", color: "#fb923c" },
+  { id: 10, label: "CH 10", color: "#fb7185" },
   { id: 11, label: "CH 11", color: "#ff6b35" },
 ];
 
-const INITIAL_APS = [
-  { id: 1, name: "AP-01", x: 150, y: 140, channel: 1 },
-  { id: 2, name: "AP-02", x: 370, y: 110, channel: 1 },
-  { id: 3, name: "AP-03", x: 560, y: 230, channel: 6 },
-  { id: 4, name: "AP-04", x: 270, y: 320, channel: 6 },
-  { id: 5, name: "AP-05", x: 490, y: 420, channel: 1 },
+const DEFAULT_1_APS = [
+  { id: 1, name: "AP-01", x: 160, y: 140, channel: 1 },
+  { id: 2, name: "AP-02", x: 390, y: 120, channel: 6 },
+  { id: 3, name: "AP-03", x: 620, y: 210, channel: 11 },
+  { id: 4, name: "AP-04", x: 300, y: 360, channel: 6 },
+  { id: 5, name: "AP-05", x: 540, y: 430, channel: 11 },
 ];
 
-const INITIAL_LINKS = [
+const DEFAULT_1_LINKS = [
   [1, 2],
   [2, 3],
-  [3, 5],
-  [1, 4],
-  [4, 5],
   [2, 4],
+  [3, 5],
+  [4, 5],
 ];
 
-const DEFAULT_COLORS = [
-  "#00e5ff",
-  "#69ff47",
-  "#ff6b35",
-  "#fbbf24",
-  "#a78bfa",
-  "#fb7185",
-  "#38bdf8",
-  "#34d399",
-];
+function createDefaultTwoNetwork() {
+  const aps = [
+    { id: 1, name: "AP-01", x: 120, y: 100, channel: 1 },
+    { id: 2, name: "AP-02", x: 300, y: 95, channel: 1 },
+    { id: 3, name: "AP-03", x: 480, y: 110, channel: 6 },
+    { id: 4, name: "AP-04", x: 660, y: 95, channel: 6 },
+    { id: 5, name: "AP-05", x: 840, y: 110, channel: 3 },
+
+    { id: 6, name: "AP-06", x: 150, y: 260, channel: 5 },
+    { id: 7, name: "AP-07", x: 330, y: 250, channel: 8 },
+    { id: 8, name: "AP-08", x: 510, y: 265, channel: 10 },
+    { id: 9, name: "AP-09", x: 690, y: 250, channel: 11 },
+    { id: 10, name: "AP-10", x: 870, y: 265, channel: 11 },
+
+    { id: 11, name: "AP-11", x: 120, y: 420, channel: 2 },
+    { id: 12, name: "AP-12", x: 300, y: 415, channel: 7 },
+    { id: 13, name: "AP-13", x: 480, y: 430, channel: 4 },
+    { id: 14, name: "AP-14", x: 660, y: 415, channel: 9 },
+    { id: 15, name: "AP-15", x: 840, y: 430, channel: 5 },
+
+    { id: 16, name: "AP-16", x: 150, y: 580, channel: 1 },
+    { id: 17, name: "AP-17", x: 330, y: 570, channel: 6 },
+    { id: 18, name: "AP-18", x: 510, y: 585, channel: 11 },
+    { id: 19, name: "AP-19", x: 690, y: 570, channel: 3 },
+    { id: 20, name: "AP-20", x: 870, y: 585, channel: 8 },
+  ];
+
+  const links = [
+    [1, 2],
+    [3, 4],
+    [5, 6],
+    [7, 8],
+    [9, 10],
+
+    [1, 6],
+    [2, 7],
+    [3, 8],
+    [4, 9],
+    [5, 10],
+
+    [6, 11],
+    [7, 12],
+    [8, 13],
+    [9, 14],
+    [10, 15],
+
+    [11, 16],
+    [12, 17],
+    [13, 18],
+    [14, 19],
+    [15, 20],
+
+    [1, 7],
+    [2, 8],
+    [3, 9],
+    [4, 10],
+    [6, 12],
+    [7, 13],
+    [8, 14],
+    [9, 15],
+    [11, 17],
+    [12, 18],
+    [13, 19],
+    [14, 20],
+  ];
+
+  return { aps, links };
+}
 
 function normalizeLink(a, b) {
   return a < b ? [a, b] : [b, a];
@@ -48,79 +117,167 @@ function cloneAps(aps) {
   return aps.map((ap) => ({ ...ap }));
 }
 
-function countConflicts(aps, links) {
-  let count = 0;
+function getChannelColor(channelId) {
+  return (
+    CHANNELS.find((channel) => channel.id === Number(channelId))?.color ||
+    "#94a3b8"
+  );
+}
 
-  for (const [a, b] of links) {
-    const apA = aps.find((ap) => ap.id === a);
-    const apB = aps.find((ap) => ap.id === b);
+function getChannelLabel(channelId) {
+  return (
+    CHANNELS.find((channel) => channel.id === Number(channelId))?.label ||
+    `CH ${channelId}`
+  );
+}
 
-    if (apA && apB && apA.channel === apB.channel) {
-      count++;
-    }
+function getLinkConflict(apA, apB) {
+  if (!apA || !apB) {
+    return {
+      hasConflict: false,
+      type: "none",
+      label: "Aucun conflit",
+      penalty: 0,
+      difference: null,
+    };
   }
 
-  return count;
+  const difference = Math.abs(Number(apA.channel) - Number(apB.channel));
+
+  if (difference === 0) {
+    return {
+      hasConflict: true,
+      type: "same",
+      label: "Conflit direct : même canal",
+      penalty: 10,
+      difference,
+    };
+  }
+
+  if (difference < MIN_CHANNEL_GAP) {
+    return {
+      hasConflict: true,
+      type: "close",
+      label: `Conflit moyen : canaux proches`,
+      penalty: MIN_CHANNEL_GAP - difference,
+      difference,
+    };
+  }
+
+  return {
+    hasConflict: false,
+    type: "ok",
+    label: `Correct : écart ${difference}`,
+    penalty: 0,
+    difference,
+  };
+}
+
+function analyzeLinks(aps, links) {
+  return links.map(([a, b]) => {
+    const apA = aps.find((ap) => ap.id === a);
+    const apB = aps.find((ap) => ap.id === b);
+    const conflict = getLinkConflict(apA, apB);
+
+    return {
+      a,
+      b,
+      apA,
+      apB,
+      ...conflict,
+    };
+  });
+}
+
+function countConflicts(aps, links) {
+  return analyzeLinks(aps, links).filter((link) => link.hasConflict).length;
+}
+
+function totalPenalty(aps, links) {
+  return analyzeLinks(aps, links).reduce(
+    (sum, link) => sum + link.penalty,
+    0
+  );
 }
 
 function getConflictedAPIds(aps, links) {
-  const conflicted = new Set();
+  const ids = new Set();
 
-  for (const [a, b] of links) {
-    const apA = aps.find((ap) => ap.id === a);
-    const apB = aps.find((ap) => ap.id === b);
-
-    if (apA && apB && apA.channel === apB.channel) {
-      conflicted.add(a);
-      conflicted.add(b);
+  for (const link of analyzeLinks(aps, links)) {
+    if (link.hasConflict) {
+      ids.add(link.a);
+      ids.add(link.b);
     }
   }
 
-  return Array.from(conflicted);
+  return Array.from(ids);
+}
+
+function getAPConflictLevels(aps, links) {
+  const levels = new Map();
+
+  for (const link of analyzeLinks(aps, links)) {
+    if (!link.hasConflict) continue;
+
+    for (const apId of [link.a, link.b]) {
+      const previous = levels.get(apId);
+
+      if (link.type === "same") {
+        levels.set(apId, "same");
+      } else if (!previous) {
+        levels.set(apId, "close");
+      }
+    }
+  }
+
+  return levels;
 }
 
 function conflictScoreForChannel(apId, channel, aps, links) {
-  let score = 0;
+  let conflictCount = 0;
+  let penalty = 0;
+  const details = [];
 
   for (const [a, b] of links) {
     if (a !== apId && b !== apId) continue;
 
     const neighborId = a === apId ? b : a;
     const neighbor = aps.find((ap) => ap.id === neighborId);
+    const simulatedAP = { id: apId, channel };
+    const result = getLinkConflict(simulatedAP, neighbor);
 
-    if (neighbor && neighbor.channel === channel) {
-      score++;
+    if (result.hasConflict) {
+      conflictCount++;
+      penalty += result.penalty;
     }
+
+    details.push({
+      neighborId,
+      neighborName: neighbor?.name || `AP-${neighborId}`,
+      neighborChannel: neighbor?.channel,
+      ...result,
+    });
   }
 
-  return score;
+  return {
+    channel,
+    conflictCount,
+    penalty,
+    details,
+  };
 }
 
-function buildMinConflictsSimulation(aps, links, channels, maxIterations = 1000) {
-  const channelIds = channels.map((channel) => channel.id);
-
+function buildMinConflictsSimulation(aps, links, maxIterations = 200) {
   let current = cloneAps(aps);
-  const initialAps = cloneAps(aps);
-  const before = countConflicts(current, links);
-  const steps = [];
 
-  if (channelIds.length === 0) {
-    return {
-      initialAps,
-      steps,
-      summary: {
-        before,
-        after: before,
-        iterations: 0,
-        success: before === 0,
-        history: [],
-        solution: cloneAps(current),
-      },
-    };
-  }
+  const initialAps = cloneAps(aps);
+  const beforeConflicts = countConflicts(current, links);
+  const beforePenalty = totalPenalty(current, links);
+  const steps = [];
 
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     const conflictsBefore = countConflicts(current, links);
+    const penaltyBefore = totalPenalty(current, links);
 
     if (conflictsBefore === 0) break;
 
@@ -132,25 +289,39 @@ function buildMinConflictsSimulation(aps, links, channels, maxIterations = 1000)
 
     const selectedBefore = current.find((ap) => ap.id === selectedId);
 
-    const candidates = channelIds.map((channel) => ({
-      channel,
-      score: conflictScoreForChannel(selectedId, channel, current, links),
-    }));
+    const candidates = CHANNELS.map((channel) =>
+      conflictScoreForChannel(selectedId, channel.id, current, links)
+    );
 
-    const minScore = Math.min(...candidates.map((candidate) => candidate.score));
+    const minPenalty = Math.min(
+      ...candidates.map((candidate) => candidate.penalty)
+    );
 
-    const bestChannels = candidates
-      .filter((candidate) => candidate.score === minScore)
-      .map((candidate) => candidate.channel);
+    let bestCandidates = candidates.filter(
+      (candidate) => candidate.penalty === minPenalty
+    );
 
-    const chosenChannel =
-      bestChannels[Math.floor(Math.random() * bestChannels.length)];
+    if (bestCandidates.length > 1 && selectedBefore) {
+      const differentFromCurrent = bestCandidates.filter(
+        (candidate) => candidate.channel !== selectedBefore.channel
+      );
+
+      if (differentFromCurrent.length > 0) {
+        bestCandidates = differentFromCurrent;
+      }
+    }
+
+    const chosenCandidate =
+      bestCandidates[Math.floor(Math.random() * bestCandidates.length)];
+
+    const chosenChannel = chosenCandidate.channel;
 
     const afterAps = current.map((ap) =>
       ap.id === selectedId ? { ...ap, channel: chosenChannel } : ap
     );
 
     const conflictsAfter = countConflicts(afterAps, links);
+    const penaltyAfter = totalPenalty(afterAps, links);
 
     steps.push({
       iteration,
@@ -159,24 +330,30 @@ function buildMinConflictsSimulation(aps, links, channels, maxIterations = 1000)
       previousChannel: selectedBefore?.channel,
       chosenChannel,
       candidates,
+      chosenCandidate,
       conflictsBefore,
       conflictsAfter,
+      penaltyBefore,
+      penaltyAfter,
       afterAps: cloneAps(afterAps),
     });
 
     current = afterAps;
   }
 
-  const after = countConflicts(current, links);
+  const afterConflicts = countConflicts(current, links);
+  const afterPenalty = totalPenalty(current, links);
 
   return {
     initialAps,
     steps,
     summary: {
-      before,
-      after,
+      before: beforeConflicts,
+      after: afterConflicts,
+      penaltyBefore: beforePenalty,
+      penaltyAfter: afterPenalty,
       iterations: steps.length,
-      success: after === 0,
+      success: afterConflicts === 0,
       history: steps,
       solution: cloneAps(current),
     },
@@ -186,9 +363,8 @@ function buildMinConflictsSimulation(aps, links, channels, maxIterations = 1000)
 export default function App() {
   const canvasRef = useRef(null);
 
-  const [channels, setChannels] = useState(INITIAL_CHANNELS);
-  const [aps, setAps] = useState(INITIAL_APS);
-  const [links, setLinks] = useState(INITIAL_LINKS);
+  const [aps, setAps] = useState(cloneAps(DEFAULT_1_APS));
+  const [links, setLinks] = useState(DEFAULT_1_LINKS.map((link) => [...link]));
 
   const [draggingAP, setDraggingAP] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
@@ -205,37 +381,35 @@ export default function App() {
 
   const [result, setResult] = useState(null);
   const [editingId, setEditingId] = useState(null);
+  const [channelMenu, setChannelMenu] = useState(null);
 
   const [constraintA, setConstraintA] = useState("");
   const [constraintB, setConstraintB] = useState("");
-
-  const [newChannelId, setNewChannelId] = useState("");
-  const [newChannelLabel, setNewChannelLabel] = useState("");
-  const [newChannelColor, setNewChannelColor] = useState("#38bdf8");
 
   const [simulation, setSimulation] = useState(null);
   const [playIndex, setPlayIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [activeStep, setActiveStep] = useState(null);
-  const [simulationSpeed, setSimulationSpeed] = useState(900);
+  const [simulationSpeed, setSimulationSpeed] = useState(1000);
 
+  const linkAnalysis = useMemo(() => analyzeLinks(aps, links), [aps, links]);
   const conflicts = useMemo(() => countConflicts(aps, links), [aps, links]);
+  const penalty = useMemo(() => totalPenalty(aps, links), [aps, links]);
+
+  const apConflictLevels = useMemo(
+    () => getAPConflictLevels(aps, links),
+    [aps, links]
+  );
 
   const conflictedIds = useMemo(
-    () => new Set(getConflictedAPIds(aps, links)),
-    [aps, links]
+    () => new Set(Array.from(apConflictLevels.keys())),
+    [apConflictLevels]
   );
 
   const visibleLogs = useMemo(() => {
     if (!simulation) return [];
     return simulation.steps.slice(0, playIndex);
   }, [simulation, playIndex]);
-
-  const channelMap = useMemo(() => {
-    const map = new Map();
-    channels.forEach((channel) => map.set(channel.id, channel));
-    return map;
-  }, [channels]);
 
   const progress =
     simulation && simulation.steps.length > 0
@@ -250,8 +424,40 @@ export default function App() {
     setActiveStep(null);
   }
 
+  function clearAllRuntimeStates() {
+    setSelectedAP(null);
+    setLinkMode(false);
+    setEditingId(null);
+    setChannelMenu(null);
+    setConstraintA("");
+    setConstraintB("");
+    setResult(null);
+    setSimulation(null);
+    setPlayIndex(0);
+    setIsPlaying(false);
+    setActiveStep(null);
+    setActiveTab("aps");
+  }
+
+  function loadDefaultOne() {
+    setAps(cloneAps(DEFAULT_1_APS));
+    setLinks(DEFAULT_1_LINKS.map((link) => [...link]));
+    setViewport({ x: 0, y: 0, scale: 1 });
+    clearAllRuntimeStates();
+  }
+
+  function loadDefaultTwo() {
+    const complex = createDefaultTwoNetwork();
+
+    setAps(cloneAps(complex.aps));
+    setLinks(complex.links.map((link) => [...link]));
+    setViewport({ x: -40, y: -20, scale: 0.75 });
+    clearAllRuntimeStates();
+  }
+
   function getScreenPosition(event) {
     const rect = canvasRef.current.getBoundingClientRect();
+
     return {
       x: event.clientX - rect.left,
       y: event.clientY - rect.top,
@@ -267,39 +473,65 @@ export default function App() {
     };
   }
 
-  function getChannelColor(channelId) {
-    return channelMap.get(channelId)?.color || "#94a3b8";
-  }
+  const handleWheel = useCallback(
+    (event) => {
+      event.preventDefault();
 
-  function getChannelLabel(channelId) {
-    return channelMap.get(channelId)?.label || `CH ${channelId}`;
-  }
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const screen = {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      };
+
+      const worldBefore = {
+        x: (screen.x - viewport.x) / viewport.scale,
+        y: (screen.y - viewport.y) / viewport.scale,
+      };
+
+      const factor = event.deltaY > 0 ? 0.88 : 1.12;
+      const nextScale = Math.min(2.4, Math.max(0.35, viewport.scale * factor));
+
+      setViewport({
+        scale: nextScale,
+        x: screen.x - worldBefore.x * nextScale,
+        y: screen.y - worldBefore.y * nextScale,
+      });
+    },
+    [viewport]
+  );
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+
+    return () => {
+      canvas.removeEventListener("wheel", handleWheel);
+    };
+  }, [handleWheel]);
 
   function handleAddAP() {
     const nextId = aps.length > 0 ? Math.max(...aps.map((ap) => ap.id)) + 1 : 1;
-    const fallbackChannel = channels[0]?.id ?? 1;
 
     const newAP = {
       id: nextId,
       name: `AP-${String(nextId).padStart(2, "0")}`,
-      x: 110 + Math.random() * 520,
-      y: 90 + Math.random() * 380,
-      channel:
-        channels[Math.floor(Math.random() * channels.length)]?.id ??
-        fallbackChannel,
+      x: 120 + Math.random() * 560,
+      y: 90 + Math.random() * 420,
+      channel: CHANNELS[Math.floor(Math.random() * CHANNELS.length)].id,
     };
 
     setAps((prev) => [...prev, newAP]);
+    setChannelMenu(null);
     clearResultAndSimulation();
   }
 
   function handleDoubleClick(event) {
-    if (
-      event.target !== canvasRef.current &&
-      !event.target.classList.contains("canvas-inner")
-    ) {
-      return;
-    }
+    if (event.target.closest(".ap-node")) return;
 
     const position = getWorldPosition(event);
     const nextId = aps.length > 0 ? Math.max(...aps.map((ap) => ap.id)) + 1 : 1;
@@ -309,10 +541,11 @@ export default function App() {
       name: `AP-${String(nextId).padStart(2, "0")}`,
       x: position.x,
       y: position.y,
-      channel: channels[Math.floor(Math.random() * channels.length)]?.id ?? 1,
+      channel: CHANNELS[Math.floor(Math.random() * CHANNELS.length)].id,
     };
 
     setAps((prev) => [...prev, newAP]);
+    setChannelMenu(null);
     clearResultAndSimulation();
   }
 
@@ -321,6 +554,7 @@ export default function App() {
     setLinks((prev) => prev.filter(([a, b]) => a !== id && b !== id));
     setSelectedAP(null);
     setEditingId(null);
+    setChannelMenu(null);
     clearResultAndSimulation();
   }
 
@@ -337,12 +571,34 @@ export default function App() {
         ap.id === apId ? { ...ap, channel: Number(channel) } : ap
       )
     );
+
+    setChannelMenu(null);
     clearResultAndSimulation();
   }
 
+  function handleAPDoubleClick(event, ap) {
+    event.stopPropagation();
+
+    setChannelMenu((prev) => {
+      if (prev?.apId === ap.id) {
+        return null;
+      }
+
+      return {
+        apId: ap.id,
+        x: ap.x,
+        y: ap.y,
+      };
+    });
+  }
+
   function handleCanvasMouseDown(event) {
+    setChannelMenu(null);
+
     if (event.target.closest(".ap-node")) return;
     if (event.target.closest("button")) return;
+    if (event.target.closest("select")) return;
+    if (event.target.closest(".channel-floating-menu")) return;
     if (linkMode) return;
 
     setIsPanning(true);
@@ -355,7 +611,12 @@ export default function App() {
   function handleAPMouseDown(event, ap) {
     event.stopPropagation();
 
-    if (event.target.closest("button") || event.target.closest("input")) {
+    if (
+      event.target.closest("button") ||
+      event.target.closest("input") ||
+      event.target.closest("select") ||
+      event.target.closest(".channel-floating-menu")
+    ) {
       return;
     }
 
@@ -413,27 +674,6 @@ export default function App() {
     setIsPanning(false);
   }
 
-  function handleWheel(event) {
-    event.preventDefault();
-
-    const screen = getScreenPosition(event);
-    const worldBefore = {
-      x: (screen.x - viewport.x) / viewport.scale,
-      y: (screen.y - viewport.y) / viewport.scale,
-    };
-
-    const direction = event.deltaY > 0 ? -1 : 1;
-    const factor = direction > 0 ? 1.12 : 0.88;
-
-    const nextScale = Math.min(2.4, Math.max(0.35, viewport.scale * factor));
-
-    setViewport({
-      scale: nextScale,
-      x: screen.x - worldBefore.x * nextScale,
-      y: screen.y - worldBefore.y * nextScale,
-    });
-  }
-
   function handleZoomIn() {
     setViewport((prev) => ({
       ...prev,
@@ -476,6 +716,7 @@ export default function App() {
     });
 
     setSelectedAP(null);
+    setChannelMenu(null);
     clearResultAndSimulation();
   }
 
@@ -486,7 +727,6 @@ export default function App() {
     if (!a || !b || a === b) return;
 
     const [x, y] = normalizeLink(a, b);
-
     const exists = links.some((link) => sameLink(link, x, y));
 
     if (!exists) {
@@ -496,66 +736,12 @@ export default function App() {
 
     setConstraintA("");
     setConstraintB("");
+    setChannelMenu(null);
   }
 
   function handleRemoveConstraint(a, b) {
     setLinks((prev) => prev.filter((link) => !sameLink(link, a, b)));
-    clearResultAndSimulation();
-  }
-
-  function handleAddChannel() {
-    const id = Number(newChannelId);
-
-    if (!id) return;
-    if (channels.some((channel) => channel.id === id)) return;
-
-    const label = newChannelLabel.trim() || `CH ${id}`;
-
-    setChannels((prev) => [
-      ...prev,
-      {
-        id,
-        label,
-        color: newChannelColor,
-      },
-    ]);
-
-    setNewChannelId("");
-    setNewChannelLabel("");
-    setNewChannelColor(
-      DEFAULT_COLORS[(channels.length + 1) % DEFAULT_COLORS.length]
-    );
-
-    clearResultAndSimulation();
-  }
-
-  function handleUpdateChannel(id, field, value) {
-    setChannels((prev) =>
-      prev.map((channel) =>
-        channel.id === id
-          ? {
-              ...channel,
-              [field]: field === "id" ? Number(value) : value,
-            }
-          : channel
-      )
-    );
-    clearResultAndSimulation();
-  }
-
-  function handleDeleteChannel(id) {
-    if (channels.length <= 1) return;
-
-    const remaining = channels.filter((channel) => channel.id !== id);
-    const fallback = remaining[0].id;
-
-    setChannels(remaining);
-    setAps((prev) =>
-      prev.map((ap) =>
-        ap.channel === id ? { ...ap, channel: fallback } : ap
-      )
-    );
-
+    setChannelMenu(null);
     clearResultAndSimulation();
   }
 
@@ -563,35 +749,22 @@ export default function App() {
     setAps((prev) =>
       prev.map((ap) => ({
         ...ap,
-        channel:
-          channels[Math.floor(Math.random() * channels.length)]?.id ??
-          ap.channel,
+        channel: CHANNELS[Math.floor(Math.random() * CHANNELS.length)].id,
       }))
     );
 
+    setChannelMenu(null);
     clearResultAndSimulation();
   }
 
   function handleReset() {
-    setChannels(INITIAL_CHANNELS.map((channel) => ({ ...channel })));
-    setAps(cloneAps(INITIAL_APS));
-    setLinks(INITIAL_LINKS.map((link) => [...link]));
-    setSelectedAP(null);
-    setLinkMode(false);
-    setEditingId(null);
-    setConstraintA("");
-    setConstraintB("");
-    setViewport({ x: 0, y: 0, scale: 1 });
-    setResult(null);
-    setSimulation(null);
-    setPlayIndex(0);
-    setIsPlaying(false);
-    setActiveStep(null);
-    setActiveTab("aps");
+    loadDefaultOne();
   }
 
   function handleStartSimulation() {
-    const generated = buildMinConflictsSimulation(aps, links, channels, 1000);
+    setChannelMenu(null);
+
+    const generated = buildMinConflictsSimulation(aps, links, 200);
 
     setSimulation(generated);
     setResult(null);
@@ -635,6 +808,7 @@ export default function App() {
 
     if (playIndex >= simulation.steps.length) {
       applySimulationIndex(0);
+      setResult(null);
       setIsPlaying(true);
       return;
     }
@@ -682,16 +856,31 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [simulation, isPlaying, playIndex, simulationSpeed]);
 
-  function isConflict(a, b) {
-    const apA = aps.find((ap) => ap.id === a);
-    const apB = aps.find((ap) => ap.id === b);
-
-    return apA && apB && apA.channel === apB.channel;
-  }
-
   function getAPName(id) {
     return aps.find((ap) => ap.id === id)?.name || `AP-${id}`;
   }
+
+  function getLinkClass(link) {
+    if (!link.hasConflict) return "link link-ok";
+    if (link.type === "same") return "link link-conflict-strong";
+    return "link link-conflict-close";
+  }
+
+  function getConstraintStatusText(link) {
+    if (!link.hasConflict) {
+      return `Correct : écart ${link.difference} canal(aux)`;
+    }
+
+    if (link.type === "same") {
+      return "Conflit direct : même canal";
+    }
+
+    return `Conflit moyen : écart ${link.difference} < ${MIN_CHANNEL_GAP}`;
+  }
+
+  const currentChannelMenuAP = channelMenu
+    ? aps.find((ap) => ap.id === channelMenu.apId)
+    : null;
 
   return (
     <div className={`app ${panelCollapsed ? "panel-collapsed" : ""}`}>
@@ -704,25 +893,27 @@ export default function App() {
           </h1>
 
           <p className="header-subtitle">
-            Éditeur dynamique pour simuler l’attribution automatique des canaux
-            Wi-Fi avec réduction des interférences.
+            Simulation d’attribution des canaux Wi-Fi CH 1 à CH 11 avec
+            détection des conflits directs et des conflits moyens d’interférence.
           </p>
         </div>
 
         <div className="header-stats">
-          <div className={`stat-box ${conflicts === 0 ? "stat-ok" : "stat-bad"}`}>
+          <div
+            className={`stat-box ${conflicts === 0 ? "stat-ok" : "stat-bad"}`}
+          >
             <small>Conflits</small>
             <strong>{conflicts}</strong>
           </div>
 
-          <div className="stat-box">
-            <small>Access points</small>
-            <strong>{aps.length}</strong>
+          <div className={`stat-box ${penalty === 0 ? "stat-ok" : "stat-bad"}`}>
+            <small>Score</small>
+            <strong>{penalty}</strong>
           </div>
 
           <div className="stat-box">
             <small>Canaux</small>
-            <strong>{channels.length}</strong>
+            <strong>1–11</strong>
           </div>
         </div>
       </header>
@@ -739,6 +930,7 @@ export default function App() {
               onClick={() => {
                 setLinkMode((prev) => !prev);
                 setSelectedAP(null);
+                setChannelMenu(null);
               }}
             >
               {linkMode ? "Mode contrainte actif" : "Mode contrainte"}
@@ -755,6 +947,19 @@ export default function App() {
             <button className="btn btn-danger" onClick={handleReset}>
               Réinitialiser
             </button>
+
+            <div className="preset-tools">
+              <button className="btn btn-small" onClick={loadDefaultOne}>
+                Défaut 1
+              </button>
+
+              <button
+                className="btn btn-small btn-complex"
+                onClick={loadDefaultTwo}
+              >
+                Défaut 2
+              </button>
+            </div>
 
             <div className="zoom-tools">
               <button className="btn btn-small" onClick={handleZoomOut}>
@@ -779,7 +984,6 @@ export default function App() {
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
-            onWheel={handleWheel}
             onDoubleClick={handleDoubleClick}
           >
             <div
@@ -790,23 +994,29 @@ export default function App() {
             >
               <div className="canvas-inner">
                 <svg className="links-svg">
-                  {links.map(([a, b]) => {
-                    const apA = aps.find((ap) => ap.id === a);
-                    const apB = aps.find((ap) => ap.id === b);
+                  {linkAnalysis.map((link) => {
+                    const { a, b, apA, apB } = link;
 
                     if (!apA || !apB) return null;
 
-                    const conflict = isConflict(a, b);
+                    const isActiveLink =
+                      activeStep &&
+                      (activeStep.apId === a || activeStep.apId === b) &&
+                      link.hasConflict;
 
                     return (
                       <g key={`${a}-${b}`}>
-                        {conflict && (
+                        {link.hasConflict && (
                           <line
                             x1={apA.x}
                             y1={apA.y}
                             x2={apB.x}
                             y2={apB.y}
-                            className="link-glow-conflict"
+                            className={
+                              link.type === "same"
+                                ? "link-glow-conflict-strong"
+                                : "link-glow-conflict-close"
+                            }
                           />
                         )}
 
@@ -815,9 +1025,9 @@ export default function App() {
                           y1={apA.y}
                           x2={apB.x}
                           y2={apB.y}
-                          className={
-                            conflict ? "link link-conflict" : "link link-ok"
-                          }
+                          className={`${getLinkClass(link)} ${
+                            isActiveLink ? "link-active-step" : ""
+                          }`}
                         />
                       </g>
                     );
@@ -841,6 +1051,7 @@ export default function App() {
 
                 {aps.map((ap) => {
                   const color = getChannelColor(ap.channel);
+                  const conflictLevel = apConflictLevels.get(ap.id);
                   const hasConflict = conflictedIds.has(ap.id);
                   const isActiveSimulationAP = activeStep?.apId === ap.id;
 
@@ -850,8 +1061,11 @@ export default function App() {
                       className={[
                         "ap-node",
                         selectedAP === ap.id ? "ap-selected" : "",
-                        hasConflict ? "ap-conflict" : "ap-ok",
+                        conflictLevel === "same" ? "ap-conflict-strong" : "",
+                        conflictLevel === "close" ? "ap-conflict-close" : "",
+                        !hasConflict ? "ap-ok" : "",
                         isActiveSimulationAP ? "ap-simulation-active" : "",
+                        channelMenu?.apId === ap.id ? "ap-channel-open" : "",
                       ].join(" ")}
                       style={{
                         left: ap.x,
@@ -859,6 +1073,7 @@ export default function App() {
                         "--ch-color": color,
                       }}
                       onMouseDown={(event) => handleAPMouseDown(event, ap)}
+                      onDoubleClick={(event) => handleAPDoubleClick(event, ap)}
                     >
                       <div className="ap-zone" />
 
@@ -896,7 +1111,17 @@ export default function App() {
                         </span>
                       </div>
 
-                      {hasConflict && <div className="ap-alert">!</div>}
+                      {hasConflict && (
+                        <div
+                          className={`ap-alert ${
+                            conflictLevel === "same"
+                              ? "ap-alert-strong"
+                              : "ap-alert-close"
+                          }`}
+                        >
+                          {conflictLevel === "same" ? "!" : "~"}
+                        </div>
+                      )}
 
                       {isActiveSimulationAP && (
                         <div className="simulation-badge">choisi</div>
@@ -904,14 +1129,49 @@ export default function App() {
                     </div>
                   );
                 })}
+
+                {channelMenu && currentChannelMenuAP && (
+                  <div
+                    className="channel-floating-menu"
+                    style={{
+                      left: channelMenu.x + 58,
+                      top: channelMenu.y - 42,
+                    }}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onDoubleClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="channel-floating-title">
+                      {currentChannelMenuAP.name} · choisir un canal
+                    </div>
+
+                    <div className="channel-floating-grid">
+                      {CHANNELS.map((channel) => (
+                        <button
+                          key={channel.id}
+                          className={`channel-floating-option ${
+                            currentChannelMenuAP.channel === channel.id
+                              ? "channel-floating-active"
+                              : ""
+                          }`}
+                          style={{ "--ch-color": channel.color }}
+                          onClick={() =>
+                            handleChannelChange(channelMenu.apId, channel.id)
+                          }
+                        >
+                          {channel.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
 
           <div className="canvas-hint">
-            Double-clique pour ajouter un AP. Maintiens le clic gauche sur le
-            fond pour déplacer l’espace. Utilise la molette ou les boutons pour
-            zoomer/dézoomer.
+            Rouge : conflit direct avec le même canal. Orange : conflit moyen
+            causé par des canaux trop proches. Double-clique sur un AP pour
+            modifier rapidement son canal.
           </div>
 
           {simulation && (
@@ -930,9 +1190,9 @@ export default function App() {
                     setSimulationSpeed(Number(event.target.value))
                   }
                 >
-                  <option value={1300}>Lent</option>
-                  <option value={900}>Normal</option>
-                  <option value={450}>Rapide</option>
+                  <option value={1500}>Très lent</option>
+                  <option value={1000}>Normal</option>
+                  <option value={550}>Rapide</option>
                 </select>
               </div>
 
@@ -962,7 +1222,7 @@ export default function App() {
                 <div className="current-step">
                   <strong>
                     #{activeStep.iteration} — {activeStep.apName} choisi au
-                    hasard
+                    hasard parmi les AP en conflit
                   </strong>
 
                   <p>
@@ -984,6 +1244,11 @@ export default function App() {
                     </span>
                   </p>
 
+                  <p>
+                    Score avant : {activeStep.penaltyBefore} → score après :{" "}
+                    {activeStep.penaltyAfter}
+                  </p>
+
                   <div className="candidate-list">
                     {activeStep.candidates.map((candidate) => (
                       <div
@@ -995,7 +1260,8 @@ export default function App() {
                         }
                       >
                         <span>{getChannelLabel(candidate.channel)}</span>
-                        <strong>{candidate.score} conflit(s)</strong>
+                        <strong>{candidate.penalty} score</strong>
+                        <small>{candidate.conflictCount} conflit(s)</small>
                       </div>
                     ))}
                   </div>
@@ -1004,8 +1270,9 @@ export default function App() {
                 <div className="current-step">
                   <strong>État initial</strong>
                   <p>
-                    La simulation va choisir un AP en conflit, tester les canaux,
-                    puis appliquer le meilleur choix.
+                    La simulation va détecter les conflits, choisir un AP en
+                    conflit, tester les 11 canaux, puis garder celui qui donne le
+                    plus petit score.
                   </p>
                 </div>
               )}
@@ -1072,13 +1339,17 @@ export default function App() {
                   <div className="ap-list">
                     {aps.map((ap) => {
                       const color = getChannelColor(ap.channel);
-                      const hasConflict = conflictedIds.has(ap.id);
+                      const conflictLevel = apConflictLevels.get(ap.id);
 
                       return (
                         <div
                           key={ap.id}
                           className={`ap-row ${
-                            hasConflict ? "ap-row-conflict" : ""
+                            conflictLevel === "same"
+                              ? "ap-row-conflict-strong"
+                              : conflictLevel === "close"
+                              ? "ap-row-conflict-close"
+                              : ""
                           }`}
                           style={{ "--ch-color": color }}
                         >
@@ -1121,15 +1392,23 @@ export default function App() {
                             }
                             style={{ borderColor: color }}
                           >
-                            {channels.map((channel) => (
+                            {CHANNELS.map((channel) => (
                               <option key={channel.id} value={channel.id}>
                                 {channel.label}
                               </option>
                             ))}
                           </select>
 
-                          {hasConflict && (
-                            <span className="conflict-badge">!</span>
+                          {conflictLevel && (
+                            <span
+                              className={`conflict-badge ${
+                                conflictLevel === "same"
+                                  ? "conflict-badge-strong"
+                                  : "conflict-badge-close"
+                              }`}
+                            >
+                              {conflictLevel === "same" ? "!" : "~"}
+                            </span>
                           )}
                         </div>
                       );
@@ -1139,39 +1418,18 @@ export default function App() {
 
                 {activeTab === "channels" && (
                   <div className="channels-panel">
-                    <div className="channel-form">
-                      <label>Ajouter un canal</label>
-
-                      <input
-                        type="number"
-                        placeholder="Numéro du canal, ex: 3"
-                        value={newChannelId}
-                        onChange={(event) => setNewChannelId(event.target.value)}
-                      />
-
-                      <input
-                        placeholder="Nom, ex: CH 3"
-                        value={newChannelLabel}
-                        onChange={(event) =>
-                          setNewChannelLabel(event.target.value)
-                        }
-                      />
-
-                      <input
-                        type="color"
-                        value={newChannelColor}
-                        onChange={(event) =>
-                          setNewChannelColor(event.target.value)
-                        }
-                      />
-
-                      <button className="btn btn-full" onClick={handleAddChannel}>
-                        Ajouter le canal
-                      </button>
+                    <div className="channel-info-card">
+                      <strong>Canaux disponibles</strong>
+                      <p>
+                        Les canaux sont fixés de CH 1 à CH 11. Chaque canal est
+                        séparé de {CHANNEL_SPACING_MHZ}, mais un signal Wi-Fi
+                        occupe environ {CHANNEL_WIDTH_MHZ}. Donc deux canaux
+                        trop proches peuvent se chevaucher.
+                      </p>
                     </div>
 
                     <div className="channel-list">
-                      {channels.map((channel) => (
+                      {CHANNELS.map((channel) => (
                         <div className="channel-row" key={channel.id}>
                           <span
                             className="channel-color"
@@ -1179,40 +1437,9 @@ export default function App() {
                           />
 
                           <div className="channel-edit">
-                            <input
-                              value={channel.label}
-                              onChange={(event) =>
-                                handleUpdateChannel(
-                                  channel.id,
-                                  "label",
-                                  event.target.value
-                                )
-                              }
-                            />
-
-                            <small>Identifiant : {channel.id}</small>
+                            <strong>{channel.label}</strong>
+                            <small>Canal n° {channel.id}</small>
                           </div>
-
-                          <input
-                            className="small-color-input"
-                            type="color"
-                            value={channel.color}
-                            onChange={(event) =>
-                              handleUpdateChannel(
-                                channel.id,
-                                "color",
-                                event.target.value
-                              )
-                            }
-                          />
-
-                          <button
-                            className="remove-link"
-                            onClick={() => handleDeleteChannel(channel.id)}
-                            disabled={channels.length <= 1}
-                          >
-                            ×
-                          </button>
                         </div>
                       ))}
                     </div>
@@ -1263,36 +1490,34 @@ export default function App() {
                     </div>
 
                     <div className="constraint-list">
-                      {links.map(([a, b]) => {
-                        const conflict = isConflict(a, b);
-
-                        return (
-                          <div
-                            className={`constraint-row ${
-                              conflict ? "constraint-conflict" : ""
-                            }`}
-                            key={`${a}-${b}`}
-                          >
-                            <div>
-                              <strong>
-                                {getAPName(a)} ↔ {getAPName(b)}
-                              </strong>
-                              <small>
-                                {conflict
-                                  ? "Conflit actif : même canal"
-                                  : "Aucun conflit"}
-                              </small>
-                            </div>
-
-                            <button
-                              className="remove-link"
-                              onClick={() => handleRemoveConstraint(a, b)}
-                            >
-                              ×
-                            </button>
+                      {linkAnalysis.map((link) => (
+                        <div
+                          className={`constraint-row ${
+                            link.type === "same"
+                              ? "constraint-conflict-strong"
+                              : link.type === "close"
+                              ? "constraint-conflict-close"
+                              : ""
+                          }`}
+                          key={`${link.a}-${link.b}`}
+                        >
+                          <div>
+                            <strong>
+                              {getAPName(link.a)} ↔ {getAPName(link.b)}
+                            </strong>
+                            <small>{getConstraintStatusText(link)}</small>
                           </div>
-                        );
-                      })}
+
+                          <button
+                            className="remove-link"
+                            onClick={() =>
+                              handleRemoveConstraint(link.a, link.b)
+                            }
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -1329,16 +1554,20 @@ export default function App() {
                           </div>
 
                           <div className="result-metric">
-                            <span>Progression</span>
-                            <strong className="metric-neutral">
-                              {progress}%
+                            <span>Score actuel</span>
+                            <strong
+                              className={
+                                penalty === 0 ? "metric-good" : "metric-bad"
+                              }
+                            >
+                              {penalty}
                             </strong>
                           </div>
 
                           <div className="result-metric">
-                            <span>Étapes</span>
+                            <span>Progression</span>
                             <strong className="metric-neutral">
-                              {playIndex}/{simulation.steps.length}
+                              {progress}%
                             </strong>
                           </div>
                         </div>
@@ -1384,7 +1613,7 @@ export default function App() {
                                 </span>
 
                                 <span className="log-conf">
-                                  {step.conflictsAfter} conflit(s)
+                                  score {step.penaltyAfter}
                                 </span>
                               </div>
                             ))
@@ -1398,40 +1627,43 @@ export default function App() {
                 {activeTab === "info" && (
                   <div className="info-panel">
                     <section>
-                      <h3>Modélisation</h3>
+                      <h3>Règle de conflit</h3>
 
                       <div className="info-row">
-                        <span>Variables</span>
-                        <strong>Points d’accès Wi-Fi</strong>
+                        <span>Rouge</span>
+                        <strong>Conflit direct : même canal</strong>
                       </div>
 
                       <div className="info-row">
-                        <span>Valeurs</span>
-                        <strong>Canaux configurables dynamiquement</strong>
-                      </div>
-
-                      <div className="info-row">
-                        <span>Contraintes</span>
+                        <span>Orange</span>
                         <strong>
-                          Deux AP reliés ne doivent pas avoir le même canal
+                          Conflit moyen : canaux proches, écart inférieur à{" "}
+                          {MIN_CHANNEL_GAP}
                         </strong>
                       </div>
 
                       <div className="info-row">
-                        <span>Objectif</span>
-                        <strong>Minimiser le nombre total de conflits</strong>
+                        <span>Correct</span>
+                        <strong>
+                          Deux AP voisins sont corrects si l’écart est au moins{" "}
+                          {MIN_CHANNEL_GAP}
+                        </strong>
                       </div>
                     </section>
 
                     <section>
-                      <h3>Navigation éditeur</h3>
+                      <h3>Pourquoi ?</h3>
 
                       <ol className="info-steps">
-                        <li>Molette : zoomer ou dézoomer.</li>
-                        <li>Clic maintenu sur le fond : déplacer l’espace.</li>
-                        <li>Clic maintenu sur un AP : déplacer l’AP.</li>
-                        <li>Double-clic sur le fond : ajouter un AP.</li>
-                        <li>Mode contrainte : relier deux AP.</li>
+                        <li>Les canaux 2,4 GHz sont espacés de 5 MHz.</li>
+                        <li>Un signal Wi-Fi occupe environ 20 à 22 MHz.</li>
+                        <li>
+                          Deux canaux proches se chevauchent donc en fréquence.
+                        </li>
+                        <li>
+                          Min-Conflicts choisit le canal qui réduit le score de
+                          conflit.
+                        </li>
                       </ol>
                     </section>
                   </div>
