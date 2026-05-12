@@ -23,7 +23,7 @@ const DEFAULT_1_APS = [
   { id: 1, name: "AP-01", x: 160, y: 140, channel: 1 },
   { id: 2, name: "AP-02", x: 390, y: 120, channel: 6 },
   { id: 3, name: "AP-03", x: 620, y: 210, channel: 11 },
-  { id: 4, name: "AP-04", x: 300, y: 360, channel: 1 },
+  { id: 4, name: "AP-04", x: 300, y: 360, channel: 11 },
   { id: 5, name: "AP-05", x: 540, y: 430, channel: 6 },
 ];
 

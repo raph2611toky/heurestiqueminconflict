@@ -18,7 +18,7 @@
   --accent-dim: rgba(0, 229, 255, 0.14);
 
   --green: #69ff47;
-  --orange: #ff6b35;
+  --orange: #ff351a81;
   --red: #ff3b5c;
   --yellow: #fbbf24;
 
@@ -252,7 +252,7 @@ button {
 .btn-active {
   border-color: rgba(251, 191, 36, 0.55);
   background: rgba(251, 191, 36, 0.13);
-  color: var(--yellow);
+  color: var(--orange);
 }
 
 .btn-run {
@@ -295,7 +295,7 @@ button {
 
 .btn-complex {
   border-color: rgba(251, 191, 36, 0.45);
-  color: var(--yellow);
+  color: var(--orange);
   background: rgba(251, 191, 36, 0.1);
 }
 
@@ -432,7 +432,7 @@ button {
 
 .link-preview-ring {
   fill: none;
-  stroke: var(--yellow);
+  stroke: var(--orange);
   stroke-width: 1.6;
   stroke-dasharray: 6 5;
   opacity: 0.75;
@@ -505,14 +505,14 @@ button {
 }
 
 .ap-selected .ap-body {
-  border-color: var(--yellow);
+  border-color: var(--orange);
   box-shadow:
     0 0 0 2px rgba(251, 191, 36, 0.25),
     0 0 28px rgba(251, 191, 36, 0.28);
 }
 
 .ap-simulation-active .ap-body {
-  border-color: var(--yellow);
+  border-color: var(--orange);
   animation: simulationPulse 0.75s ease-in-out infinite alternate;
 }
 
@@ -630,7 +630,7 @@ button {
   border: 1px solid rgba(251, 191, 36, 0.45);
   border-radius: 999px;
   background: rgba(251, 191, 36, 0.16);
-  color: var(--yellow);
+  color: var(--orange);
   font-family: "JetBrains Mono", monospace;
   font-size: 10px;
   font-weight: 800;
@@ -684,7 +684,7 @@ button {
 .progress-bar div {
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--accent), var(--yellow));
+  background: linear-gradient(90deg, var(--accent), var(--orange));
   transition: width 0.28s ease;
 }
 
@@ -1114,7 +1114,7 @@ select:focus {
 .status-warning {
   border: 1px solid rgba(251, 191, 36, 0.32);
   background: rgba(251, 191, 36, 0.1);
-  color: var(--yellow);
+  color: var(--orange);
 }
 
 .log-title {
@@ -1376,7 +1376,7 @@ select:focus {
 }
 
 .ap-channel-open .ap-body {
-  border-color: var(--yellow);
+  border-color: var(--orange);
   box-shadow:
     0 0 0 2px rgba(251, 191, 36, 0.25),
     0 0 30px rgba(251, 191, 36, 0.28);
@@ -1404,12 +1404,12 @@ select:focus {
 }
 
 .ap-conflict-close .ap-body {
-  border-color: var(--yellow);
+  border-color: var(--orange);
 }
 
 .ap-conflict-close .ap-channel,
 .ap-conflict-close .ap-icon {
-  color: var(--yellow);
+  color: var(--orange);
 }
 
 .ap-alert-strong {
@@ -1418,7 +1418,7 @@ select:focus {
 }
 
 .ap-alert-close {
-  background: var(--yellow);
+  background: var(--orange);
   color: #1c1200;
 }
 
@@ -1437,7 +1437,7 @@ select:focus {
 
 .conflict-badge-close {
   background: rgba(251, 191, 36, 0.18);
-  color: var(--yellow);
+  color: var(--orange);
 }
 
 .constraint-conflict-strong {
@@ -1449,11 +1449,11 @@ select:focus {
 }
 
 .link-conflict-close {
-  stroke: var(--yellow);
+  stroke: var(--orange);
 }
 
 .link-glow-conflict-close {
-  stroke: var(--yellow);
+  stroke: var(--orange);
 }
 .generate-panel {
   display: grid;
